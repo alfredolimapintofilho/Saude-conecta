@@ -24,3 +24,21 @@ export default function App() {
     </div>
   );
 }
+
+import { useState } from 'react';
+import Login from './pages/Login';
+import Register from './pages/Register';
+
+export default function App() {
+  const [currentPage, setCurrentPage] = useState('login');
+
+  return (
+    <div>
+      {currentPage === 'login' ? (
+        <Login onSwitchToRegister={() => setCurrentPage('register')} />
+      ) : (
+        <Register onSwitchToLogin={() => setCurrentPage('login')} />
+      )}
+    </div>
+  );
+}
