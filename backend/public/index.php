@@ -26,3 +26,5 @@ if ($request_uri === '/api/register' && $method === 'POST') {
     http_response_code(404);
     echo json_encode(["message" => "Rota não encontrada."]);
 }
+
+C:\xampp\htdocs\saude-conecta\

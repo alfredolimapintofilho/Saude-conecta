@@ -11,8 +11,8 @@ $erro = '';
 $sucesso = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    require_once __DIR__ . '/../config/database.php';
-    require_once __DIR__ . '/../models/Usuario.php';
+    require_once __DIR__ . '/config/database.php';
+    require_once __DIR__ . '/models/Usuario.php';
 
     $cpf            = preg_replace('/\D/', '', $_POST['cpf'] ?? '');
     $nomeCompleto   = trim($_POST['nomeCompleto'] ?? '');
@@ -60,8 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             if ($novoId) {
                 $sucesso = 'Cadastro realizado com sucesso! Você já pode fazer login.';
-                // Limpa o formulário
-                $_POST = [];
+                $_POST = []; // limpa o formulário
             } else {
                 $erro = 'Erro ao cadastrar. Tente novamente.';
             }
@@ -128,103 +127,4 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                  class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none">
         </div>
         <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Data de Nascimento *</label>
-          <input type="date" name="dataNascimento" required
-                 value="<?= htmlspecialchars($_POST['dataNascimento'] ?? '') ?>"
-                 class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none">
-        </div>
-      </div>
-
-      <!-- E-mail + Telefone -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">E-mail *</label>
-          <input type="email" name="email" required
-                 value="<?= htmlspecialchars($_POST['email'] ?? '') ?>"
-                 class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Telefone *</label>
-          <input type="tel" name="telefone" id="telefone" required
-                 placeholder="(83) 99999-9999"
-                 value="<?= htmlspecialchars($_POST['telefone'] ?? '') ?>"
-                 class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none">
-        </div>
-      </div>
-
-      <!-- Cartão SUS -->
-      <div>
-        <label class="block text-sm font-medium text-slate-700 mb-1">Cartão SUS (opcional)</label>
-        <input type="text" name="cartaoSus"
-               placeholder="000 0000 0000 0000"
-               value="<?= htmlspecialchars($_POST['cartaoSus'] ?? '') ?>"
-               class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none">
-      </div>
-
-      <!-- Senha + Confirmar Senha -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Senha *</label>
-          <input type="password" name="senha" required minlength="6"
-                 class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-slate-700 mb-1">Confirmar Senha *</label>
-          <input type="password" name="confirmarSenha" required
-                 class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none">
-        </div>
-      </div>
-
-      <!-- LGPD -->
-      <div class="flex items-start gap-2 pt-1">
-        <input type="checkbox" name="aceitaLgpd" id="aceitaLgpd" required class="mt-1">
-        <label for="aceitaLgpd" class="text-sm text-slate-600">
-          Eu li e aceito os termos de privacidade e o tratamento dos meus dados conforme a <strong>LGPD</strong>.
-        </label>
-      </div>
-
-      <!-- Botão -->
-      <button type="submit"
-              class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 rounded-lg shadow-md transition mt-2">
-        Criar Conta
-      </button>
-    </form>
-
-    <!-- Link para login -->
-    <div class="mt-6 text-center">
-      <a href="login.php" class="text-sm text-emerald-600 hover:underline">
-        Já tem conta? Fazer login
-      </a>
-    </div>
-  </div>
-
-  <script>
-    // Máscara de CPF
-    document.getElementById('cpf').addEventListener('input', function (e) {
-      let value = e.target.value.replace(/\D/g, '');
-      if (value.length > 11) value = value.slice(0, 11);
-      value = value.replace(/(\d{3})(\d)/, '$1.$2');
-      value = value.replace(/(\d{3})(\d)/, '$1.$2');
-      value = value.replace(/(\d{3})(\d{1,2})$/, '$1-$2');
-      e.target.value = value;
-    });
-
-    // Máscara de telefone
-    document.getElementById('telefone').addEventListener('input', function (e) {
-      let value = e.target.value.replace(/\D/g, '');
-      if (value.length > 11) value = value.slice(0, 11);
-
-      if (value.length > 10) {
-        value = value.replace(/(\d{2})(\d{5})(\d{4})/, '($1) $2-$3');
-      } else if (value.length > 6) {
-        value = value.replace(/(\d{2})(\d{4})(\d{0,4})/, '($1) $2-$3');
-      } else if (value.length > 2) {
-        value = value.replace(/(\d{2})(\d{0,5})/, '($1) $2');
-      } else {
-        value = value.replace(/(\d*)/, '($1');
-      }
-      e.target.value = value;
-    });
-  </script>
-</body>
-</html>
+          <label class="block text-sm font-medium text-slate-700 mb-1">Data de N
