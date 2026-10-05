@@ -1,4 +1,98 @@
+# ========================
+# Dependências
+# ========================
 node_modules/
+vendor/                 # caso use Composer no futuro
+bower_components/
+
+# ========================
+# Arquivos de ambiente e segredos
+# ========================
 .env
+.env.local
+.env.development
+.env.production
+.env.*.local
+*.env
+
+# ========================
+# Logs
+# ========================
+logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ========================
+# Sistema operacional
+# ========================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# ========================
+# Editores e IDEs
+# ========================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# ========================
+# Build e cache do frontend
+# ========================
+dist/
+build/
+.cache/
+.parcel-cache/
+.next/
+out/
+.nuxt/
+.turbo/
+.vite/
+
+# ========================
+# Arquivos temporários e de teste
+# ========================
+coverage/
+.nyc_output/
+*.tmp
+*.temp
+tmp/
+temp/
+
+# ========================
+# Banco de dados e backups
+# ========================
+*.sql.bak
+*.sqlite
+*.sqlite3
+*.db
+
+# ========================
+# PHP específico
+# ========================
+# Arquivos de configuração locais
+config/local.php
+backend/config/local.php
+
+# ========================
+# Outros
+# ========================
+*.pem
+*.key
+*.crt
+.history/
