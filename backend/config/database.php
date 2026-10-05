@@ -2,9 +2,9 @@
 
 class Database {
     private static $host = 'localhost';
-    private static $db_name = 'saude_conecta';
+    private static $db_name = 'saude_conecta';   // ← nome do banco
     private static $username = 'root';
-    private static $password = '';
+    private static $password = '';               // senha vazia (padrão do XAMPP)
     private static $conn = null;
 
     public static function getConnection() {

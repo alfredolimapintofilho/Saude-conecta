@@ -54,7 +54,8 @@ class Usuario {
             $usuario_id = $this->conn->lastInsertId();
 
             // Registrar consentimento LGPD
-            $query_lgpd = "INSERT INTO lgpd_termos_consentimento (usuario_id, termo_versao, ip_acesso) VALUES (:usuario_id, '1.0', :ip)";
+            $query_lgpd = "INSERT INTO lgpd_termos_consentimento (usuario_id, termo_versao, ip_acesso) 
+                           VALUES (:usuario_id, '1.0', :ip)";
             $stmt_lgpd = $this->conn->prepare($query_lgpd);
             $ip_acesso = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
             
@@ -64,15 +65,22 @@ class Usuario {
 
             $this->conn->commit();
             return $usuario_id;
+
         } catch (Exception $e) {
             $this->conn->rollBack();
+            // Para depurar, você pode descomentar a linha abaixo:
+            // echo "Erro: " . $e->getMessage();
             return false;
         }
     }
 
     // Buscar Usuário por CPF para Login
     public function buscarPorCpf($cpf) {
-        $query = "SELECT id, cpf, nome_completo, email, senha_hash, tipo_usuario FROM " . $this->table_name . " WHERE cpf = :cpf LIMIT 1";
+        $query = "SELECT id, cpf, nome_completo, email, senha_hash, tipo_usuario 
+                  FROM " . $this->table_name . " 
+                  WHERE cpf = :cpf 
+                  LIMIT 1";
+                  
         $stmt = $this->conn->prepare($query);
         $stmt->bindParam(":cpf", $cpf);
         $stmt->execute();
