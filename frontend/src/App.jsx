@@ -1,44 +1,61 @@
-import { useEffect, useState } from 'react';
-import { checkApiStatus } from './services/api';
-
-export default function App() {
-  const [apiStatus, setApiStatus] = useState(null);
-
-  useEffect(() => {
-    checkApiStatus().then(data => setApiStatus(data));
-  }, []);
-
-  return (
-    <div style={{ fontFamily: 'sans-serif', padding: '2rem', textAlign: 'center' }}>
-      <h1>🏥 Saúde Conecta - Patos/PB</h1>
-      <p>A saúde da cidade na palma da sua mão.</p>
-      
-      <div style={{ marginTop: '2rem', padding: '1rem', border: '1px solid #ccc', borderRadius: '8px' }}>
-        <h3>Status da API Backend:</h3>
-        {apiStatus ? (
-          <p style={{ color: 'green' }}>🟢 {apiStatus.status.toUpperCase()} - {apiStatus.projeto}</p>
-        ) : (
-          <p style={{ color: 'red' }}>🔴 Desconectado ou carregando...</p>
-        )}
-      </div>
-    </div>
-  );
-}
-
 import { useState } from 'react';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import MapaSaude from './components/MapaSaude';
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState('login');
+  const [currentPage, setCurrentPage] = useState('login'); // 'login' | 'register' | 'mapa'
+  const [usuario, setUsuario] = useState(null);
+
+  // Quando o login for bem-sucedido
+  const handleLoginSuccess = (dadosUsuario) => {
+    setUsuario(dadosUsuario);
+    setCurrentPage('mapa');
+  };
+
+  // Logout
+  const handleLogout = () => {
+    setUsuario(null);
+    setCurrentPage('login');
+  };
+
+  if (currentPage === 'login') {
+    return (
+      <Login
+        onSwitchToRegister={() => setCurrentPage('register')}
+        onLoginSuccess={handleLoginSuccess}
+      />
+    );
+  }
+
+  if (currentPage === 'register') {
+    return (
+      <Register
+        onSwitchToLogin={() => setCurrentPage('login')}
+        onRegisterSuccess={() => setCurrentPage('login')}
+      />
+    );
+  }
 
   return (
-    <div>
-      {currentPage === 'login' ? (
-        <Login onSwitchToRegister={() => setCurrentPage('register')} />
-      ) : (
-        <Register onSwitchToLogin={() => setCurrentPage('login')} />
-      )}
+    <div className="h-screen flex flex-col">
+      <header className="bg-emerald-700 text-white px-4 py-3 flex items-center justify-between shadow">
+        <div>
+          <h1 className="font-bold text-lg">🏥 Saúde Conecta</h1>
+          <p className="text-xs text-emerald-100">
+            Olá, {usuario?.nome || 'Cidadão'}
+          </p>
+        </div>
+        <button
+          onClick={handleLogout}
+          className="bg-emerald-800 hover:bg-emerald-900 px-3 py-1.5 rounded text-sm"
+        >
+          Sair
+        </button>
+      </header>
+      <div className="flex-1">
+        <MapaSaude />
+      </div>
     </div>
   );
 }
