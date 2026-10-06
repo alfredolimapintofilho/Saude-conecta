@@ -1,93 +1,276 @@
 <?php
 
-class Usuario {
-    private $conn;
-    private $table_name = "usuarios";
+class Usuario
+{
+    private $db;
 
-    public function __construct($db) {
-        $this->conn = $db;
+    public function __construct($db)
+    {
+        $this->db = $db;
     }
 
-    // Verificar se CPF já está cadastrado
-    public function cpfExiste($cpf) {
-        $query = "SELECT id FROM " . $this->table_name . " WHERE cpf = :cpf LIMIT 1";
-        $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(":cpf", $cpf);
-        $stmt->execute();
-        return $stmt->rowCount() > 0;
+
+    // =========================================================
+    // VERIFICAR SE CPF EXISTE
+    // =========================================================
+
+    public function cpfExiste($cpf)
+    {
+        $sql = "
+            SELECT id
+            FROM usuarios
+            WHERE cpf = :cpf
+            LIMIT 1
+        ";
+
+        $stmt = $this->db->prepare($sql);
+
+        $stmt->execute([
+            ':cpf' => $cpf
+        ]);
+
+        return $stmt->fetch(PDO::FETCH_ASSOC) !== false;
     }
 
-    // Verificar se Email já está cadastrado
-    public function emailExiste($email) {
-        $query = "SELECT id FROM " . $this->table_name . " WHERE email = :email LIMIT 1";
-        $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(":email", $email);
-        $stmt->execute();
-        return $stmt->rowCount() > 0;
+
+    // =========================================================
+    // VERIFICAR SE E-MAIL EXISTE
+    // =========================================================
+
+    public function emailExiste($email)
+    {
+        $sql = "
+            SELECT id
+            FROM usuarios
+            WHERE email = :email
+            LIMIT 1
+        ";
+
+        $stmt = $this->db->prepare($sql);
+
+        $stmt->execute([
+            ':email' => $email
+        ]);
+
+        return $stmt->fetch(PDO::FETCH_ASSOC) !== false;
     }
 
-    // Cadastrar Cidadão
-    public function criar($dados) {
-        try {
-            $this->conn->beginTransaction();
 
-            // Inserir Usuário
-            $query = "INSERT INTO " . $this->table_name . " 
-                        (cpf, nome_completo, email, senha_hash, telefone, data_nascimento, cartao_sus, tipo_usuario) 
-                      VALUES 
-                        (:cpf, :nome_completo, :email, :senha_hash, :telefone, :data_nascimento, :cartao_sus, 'cidadao')";
+    // =========================================================
+    // CRIAR USUÁRIO
+    // =========================================================
 
-            $stmt = $this->conn->prepare($query);
+    public function criar($dados)
+    {
+        // Criptografa a senha
+        $senhaHash = password_hash(
+            $dados['senha'],
+            PASSWORD_DEFAULT
+        );
 
-            $senha_hash = password_hash($dados['senha'], PASSWORD_BCRYPT);
-            $cartao_sus = !empty($dados['cartaoSus']) ? $dados['cartaoSus'] : null;
 
-            $stmt->bindParam(":cpf", $dados['cpf']);
-            $stmt->bindParam(":nome_completo", $dados['nomeCompleto']);
-            $stmt->bindParam(":email", $dados['email']);
-            $stmt->bindParam(":senha_hash", $senha_hash);
-            $stmt->bindParam(":telefone", $dados['telefone']);
-            $stmt->bindParam(":data_nascimento", $dados['dataNascimento']);
-            $stmt->bindParam(":cartao_sus", $cartao_sus);
+        $sql = "
+            INSERT INTO usuarios
+            (
+                nome_completo,
+                cpf,
+                data_nascimento,
+                email,
+                telefone,
+                cartao_sus,
+                senha_hash,
+                tipo_usuario
+            )
+            VALUES
+            (
+                :nome_completo,
+                :cpf,
+                :data_nascimento,
+                :email,
+                :telefone,
+                :cartao_sus,
+                :senha_hash,
+                :tipo_usuario
+            )
+        ";
 
-            $stmt->execute();
-            $usuario_id = $this->conn->lastInsertId();
 
-            // Registrar consentimento LGPD
-            $query_lgpd = "INSERT INTO lgpd_termos_consentimento (usuario_id, termo_versao, ip_acesso) 
-                           VALUES (:usuario_id, '1.0', :ip)";
-            $stmt_lgpd = $this->conn->prepare($query_lgpd);
-            $ip_acesso = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
-            
-            $stmt_lgpd->bindParam(":usuario_id", $usuario_id);
-            $stmt_lgpd->bindParam(":ip", $ip_acesso);
-            $stmt_lgpd->execute();
+        $stmt = $this->db->prepare($sql);
 
-            $this->conn->commit();
-            return $usuario_id;
 
-        } catch (Exception $e) {
-            $this->conn->rollBack();
-            // Para depurar, você pode descomentar a linha abaixo:
-            // echo "Erro: " . $e->getMessage();
+        $stmt->execute([
+
+            ':nome_completo' =>
+                $dados['nomeCompleto'],
+
+            ':cpf' =>
+                $dados['cpf'],
+
+            ':data_nascimento' =>
+                $dados['dataNascimento'],
+
+            ':email' =>
+                $dados['email'],
+
+            ':telefone' =>
+                $dados['telefone'],
+
+            ':cartao_sus' =>
+                $dados['cartaoSus'],
+
+            ':senha_hash' =>
+                $senhaHash,
+
+            ':tipo_usuario' =>
+                'cidadao'
+        ]);
+
+
+        return $this->db->lastInsertId();
+    }
+
+
+    // =========================================================
+    // BUSCAR USUÁRIO POR E-MAIL
+    // =========================================================
+
+    public function buscarPorEmail($email)
+    {
+        $sql = "
+            SELECT
+                id,
+                nome_completo,
+                cpf,
+                data_nascimento,
+                email,
+                telefone,
+                cartao_sus,
+                senha_hash,
+                criado_em,
+                tipo_usuario
+            FROM usuarios
+            WHERE email = :email
+            LIMIT 1
+        ";
+
+
+        $stmt = $this->db->prepare($sql);
+
+
+        $stmt->execute([
+            ':email' => $email
+        ]);
+
+
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+
+
+    // =========================================================
+    // AUTENTICAR POR E-MAIL
+    // =========================================================
+
+    public function autenticarPorEmail($email, $senha)
+    {
+        $usuario = $this->buscarPorEmail($email);
+
+
+        // E-mail não encontrado
+        if (!$usuario) {
             return false;
         }
+
+
+        // Verificar se existe senha_hash
+        if (
+            !isset($usuario['senha_hash']) ||
+            empty($usuario['senha_hash'])
+        ) {
+            return false;
+        }
+
+
+        // Verificar senha
+        if (
+            !password_verify(
+                $senha,
+                $usuario['senha_hash']
+            )
+        ) {
+            return false;
+        }
+
+
+        return $usuario;
     }
 
-    // Buscar Usuário por CPF para Login
-    public function buscarPorCpf($cpf) {
-        $query = "SELECT id, cpf, nome_completo, email, senha_hash, tipo_usuario 
-                  FROM " . $this->table_name . " 
-                  WHERE cpf = :cpf 
-                  LIMIT 1";
-                  
-        $stmt = $this->conn->prepare($query);
-        $stmt->bindParam(":cpf", $cpf);
-        $stmt->execute();
 
-        if ($stmt->rowCount() > 0) {
-            return $stmt->fetch(PDO::FETCH_ASSOC);
-        }
-        return null;
+    // =========================================================
+    // BUSCAR POR CPF
+    // =========================================================
+
+    public function buscarPorCpf($cpf)
+    {
+        $sql = "
+            SELECT
+                id,
+                nome_completo,
+                cpf,
+                data_nascimento,
+                email,
+                telefone,
+                cartao_sus,
+                senha_hash,
+                criado_em,
+                tipo_usuario
+            FROM usuarios
+            WHERE cpf = :cpf
+            LIMIT 1
+        ";
+
+
+        $stmt = $this->db->prepare($sql);
+
+
+        $stmt->execute([
+            ':cpf' => $cpf
+        ]);
+
+
+        return $stmt->fetch(PDO::FETCH_ASSOC);
+    }
+
+
+    // =========================================================
+    // ALTERAR SENHA
+    // =========================================================
+
+    public function alterarSenha($id, $novaSenha)
+    {
+        // Criptografa a nova senha
+        $senhaHash = password_hash(
+            $novaSenha,
+            PASSWORD_DEFAULT
+        );
+
+
+        $sql = "
+            UPDATE usuarios
+            SET senha_hash = :senha_hash
+            WHERE id = :id
+        ";
+
+
+        $stmt = $this->db->prepare($sql);
+
+
+        return $stmt->execute([
+
+            ':senha_hash' =>
+                $senhaHash,
+
+            ':id' =>
+                $id
+        ]);
     }
 }

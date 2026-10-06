@@ -2,133 +2,299 @@
 
 session_start();
 
-// Se já estiver logado, redireciona
+
+// =========================================================
+// SE JÁ ESTIVER LOGADO, VAI PARA O MAPA
+// =========================================================
+
 if (isset($_SESSION['usuario'])) {
-    header('Location: mapa.php');
+    header('Location: ../components/mapa.php');
     exit;
 }
+
+
+// =========================================================
+// VARIÁVEIS
+// =========================================================
 
 $erro = '';
 $sucesso = '';
 
+
+// =========================================================
+// PROCESSAMENTO DO CADASTRO
+// =========================================================
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
-    // Caminhos corretos:
-    // register.php -> frontend/src/pages/
-    // database.php -> backend/config/
-    // Usuario.php  -> backend/models/
+    // =====================================================
+    // CONEXÃO COM O BANCO
+    // =====================================================
 
     require_once __DIR__ . '/../../../backend/config/database.php';
     require_once __DIR__ . '/../../../backend/models/Usuario.php';
 
-    // Recebe os dados do formulário
-    $cpf            = preg_replace('/\D/', '', $_POST['cpf'] ?? '');
-    $nomeCompleto   = trim($_POST['nomeCompleto'] ?? '');
-    $email          = trim($_POST['email'] ?? '');
-    $telefone       = trim($_POST['telefone'] ?? '');
-    $dataNascimento = $_POST['dataNascimento'] ?? '';
-    $cartaoSus      = trim($_POST['cartaoSus'] ?? '');
-    $senha          = $_POST['senha'] ?? '';
+
+    // =====================================================
+    // RECEBER DADOS
+    // =====================================================
+
+    $cpf = preg_replace(
+        '/\D/',
+        '',
+        $_POST['cpf'] ?? ''
+    );
+
+    $nomeCompleto = trim(
+        $_POST['nomeCompleto'] ?? ''
+    );
+
+    $email = trim(
+        $_POST['email'] ?? ''
+    );
+
+    $telefone = trim(
+        $_POST['telefone'] ?? ''
+    );
+
+    $dataNascimentoDigitada = trim(
+        $_POST['dataNascimento'] ?? ''
+    );
+
+    $cartaoSus = trim(
+        $_POST['cartaoSus'] ?? ''
+    );
+
+    $senha = $_POST['senha'] ?? '';
+
     $confirmarSenha = $_POST['confirmarSenha'] ?? '';
-    $aceitaLgpd     = isset($_POST['aceitaLgpd']);
 
-    // =========================
-    // VALIDAÇÕES
-    // =========================
+    $aceitaLgpd = isset(
+        $_POST['aceitaLgpd']
+    );
 
-    if (
-        empty($cpf) ||
-        empty($nomeCompleto) ||
-        empty($email) ||
-        empty($telefone) ||
-        empty($dataNascimento) ||
-        empty($senha) ||
-        empty($confirmarSenha)
-    ) {
 
-        $erro = 'Preencha todos os campos obrigatórios.';
+    // =====================================================
+    // CONVERTER DATA DD/MM/AAAA PARA AAAA-MM-DD
+    // =====================================================
 
-    } elseif (strlen($cpf) !== 11) {
+    $dataNascimento = '';
 
-        $erro = 'CPF inválido.';
+    if (!empty($dataNascimentoDigitada)) {
 
-    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $dataObj = DateTime::createFromFormat(
+            'd/m/Y',
+            $dataNascimentoDigitada
+        );
 
-        $erro = 'Digite um e-mail válido.';
+        $errosData = DateTime::getLastErrors();
 
-    } elseif (!DateTime::createFromFormat('Y-m-d', $dataNascimento)) {
+        // Em algumas versões do PHP getLastErrors()
+        // pode retornar false quando não existem erros.
 
-        $erro = 'Data de nascimento inválida.';
+        $dataInvalida =
+            $dataObj === false ||
+            (
+                $errosData !== false &&
+                (
+                    $errosData['warning_count'] > 0 ||
+                    $errosData['error_count'] > 0
+                )
+            );
 
-    } elseif ($senha !== $confirmarSenha) {
 
-        $erro = 'As senhas não coincidem.';
+        if ($dataInvalida) {
 
-    } elseif (strlen($senha) < 6) {
+            $erro = 'Digite uma data de nascimento válida.';
 
-        $erro = 'A senha deve ter no mínimo 6 caracteres.';
+        } elseif (
+            $dataObj->format('d/m/Y') !==
+            $dataNascimentoDigitada
+        ) {
 
-    } elseif (!$aceitaLgpd) {
+            $erro = 'Digite a data no formato dd/mm/aaaa.';
 
-        $erro = 'Você precisa aceitar os termos da LGPD para se cadastrar.';
+        } else {
 
-    } else {
+            // Impede data futura
 
-        try {
+            $hoje = new DateTime();
 
-            // Conecta ao banco
-            $db = Database::getConnection();
+            if ($dataObj > $hoje) {
 
-            // Instancia o usuário
-            $usuario = new Usuario($db);
-
-            // Verifica se CPF já existe
-            if ($usuario->cpfExiste($cpf)) {
-
-                $erro = 'Este CPF já está cadastrado.';
-
-            // Verifica se e-mail já existe
-            } elseif ($usuario->emailExiste($email)) {
-
-                $erro = 'Este e-mail já está cadastrado.';
+                $erro = 'A data de nascimento não pode ser futura.';
 
             } else {
 
-                // Dados para cadastro
+                $dataNascimento =
+                    $dataObj->format('Y-m-d');
+            }
+        }
+    }
+
+
+    // =====================================================
+    // VALIDAÇÕES
+    // =====================================================
+
+    if (empty($erro)) {
+
+        if (
+            empty($cpf) ||
+            empty($nomeCompleto) ||
+            empty($email) ||
+            empty($telefone) ||
+            empty($dataNascimentoDigitada) ||
+            empty($senha) ||
+            empty($confirmarSenha)
+        ) {
+
+            $erro =
+                'Preencha todos os campos obrigatórios.';
+
+        } elseif (strlen($cpf) !== 11) {
+
+            $erro = 'CPF inválido.';
+
+        } elseif (
+            !filter_var(
+                $email,
+                FILTER_VALIDATE_EMAIL
+            )
+        ) {
+
+            $erro = 'Digite um e-mail válido.';
+
+        } elseif (
+            strlen($senha) < 6
+        ) {
+
+            $erro =
+                'A senha deve ter no mínimo 6 caracteres.';
+
+        } elseif (
+            $senha !== $confirmarSenha
+        ) {
+
+            $erro =
+                'As senhas não coincidem.';
+
+        } elseif (!$aceitaLgpd) {
+
+            $erro =
+                'Você precisa aceitar os termos da LGPD para se cadastrar.';
+        }
+    }
+
+
+    // =====================================================
+    // CADASTRAR
+    // =====================================================
+
+    if (empty($erro)) {
+
+        try {
+
+            // =============================================
+            // CONECTAR AO BANCO
+            // =============================================
+
+            $db = Database::getConnection();
+
+
+            // =============================================
+            // CRIAR OBJETO USUÁRIO
+            // =============================================
+
+            $usuario = new Usuario($db);
+
+
+            // =============================================
+            // VERIFICAR CPF
+            // =============================================
+
+            if ($usuario->cpfExiste($cpf)) {
+
+                $erro =
+                    'Este CPF já está cadastrado.';
+
+            }
+
+            // =============================================
+            // VERIFICAR E-MAIL
+            // =============================================
+
+            elseif ($usuario->emailExiste($email)) {
+
+                $erro =
+                    'Este e-mail já está cadastrado.';
+
+            }
+
+            // =============================================
+            // CRIAR CONTA
+            // =============================================
+
+            else {
+
                 $dados = [
-                    'cpf'            => $cpf,
-                    'nomeCompleto'   => $nomeCompleto,
-                    'email'          => $email,
-                    'telefone'       => $telefone,
-                    'dataNascimento' => $dataNascimento,
-                    'cartaoSus'      => $cartaoSus ?: null,
-                    'senha'          => $senha,
-                    'aceitaLgpd'     => true
+
+                    'cpf' =>
+                        $cpf,
+
+                    'nomeCompleto' =>
+                        $nomeCompleto,
+
+                    'email' =>
+                        $email,
+
+                    'telefone' =>
+                        $telefone,
+
+                    'dataNascimento' =>
+                        $dataNascimento,
+
+                    'cartaoSus' =>
+                        $cartaoSus !== ''
+                            ? $cartaoSus
+                            : null,
+
+                    'senha' =>
+                        $senha,
+
+                    'aceitaLgpd' =>
+                        true
                 ];
 
-                // Cria o usuário
-                $novoId = $usuario->criar($dados);
+
+                // =========================================
+                // SALVAR
+                // =========================================
+
+                $novoId =
+                    $usuario->criar($dados);
+
 
                 if ($novoId) {
 
-                    $sucesso = 'Cadastro realizado com sucesso! Você já pode fazer login.';
+                    $sucesso =
+                        'Cadastro realizado com sucesso! Você já pode fazer login.';
 
-                    // Limpa os campos
+                    // Limpa os dados do formulário
+
                     $_POST = [];
 
                 } else {
 
-                    $erro = 'Erro ao cadastrar. Verifique os dados e tente novamente.';
+                    $erro =
+                        'Erro ao cadastrar. Tente novamente.';
                 }
             }
 
-        } catch (PDOException $e) {
-
-            $erro = 'Erro ao conectar ao banco de dados. Verifique se o MySQL está funcionando.';
-
         } catch (Exception $e) {
 
-            $erro = 'Ocorreu um erro ao realizar o cadastro. Tente novamente.';
+            $erro =
+                'Erro ao cadastrar. Verifique a conexão com o banco de dados.';
         }
     }
 }
@@ -150,59 +316,101 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     <title>Cadastro - Saúde Conecta</title>
 
+
+    <!-- =====================================================
+         TAILWIND CSS
+         ===================================================== -->
+
     <script src="https://cdn.tailwindcss.com"></script>
 
 </head>
 
-<body class="bg-slate-50 min-h-screen flex items-center justify-center p-4">
 
-    <div class="max-w-xl w-full bg-white rounded-2xl shadow-xl p-8 border border-slate-100 my-8">
+<body
+    class="bg-slate-50 min-h-screen flex items-center justify-center p-4"
+>
 
-        <!-- CABEÇALHO -->
+
+    <!-- =====================================================
+         CARD
+         ===================================================== -->
+
+    <div
+        class="max-w-xl w-full bg-white rounded-2xl shadow-xl p-8 border border-slate-100 my-8"
+    >
+
+
+        <!-- =================================================
+             CABEÇALHO
+             ================================================= -->
 
         <div class="text-center mb-6">
 
             <div
                 class="inline-flex items-center justify-center w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full mb-3 text-2xl"
             >
+
                 🏥
+
             </div>
 
-            <h1 class="text-2xl font-bold text-slate-800">
+
+            <h1
+                class="text-2xl font-bold text-slate-800"
+            >
+
                 Criar Conta Cidadão
+
             </h1>
 
-            <p class="text-sm text-slate-500 mt-1">
+
+            <p
+                class="text-sm text-slate-500 mt-1"
+            >
+
                 Preencha seus dados para acessar as unidades de saúde de Patos-PB
+
             </p>
 
         </div>
 
 
-        <!-- MENSAGEM DE ERRO -->
+        <!-- =================================================
+             MENSAGEM DE ERRO
+             ================================================= -->
 
-        <?php if ($erro): ?>
+        <?php if (!empty($erro)): ?>
 
             <div
-                class="mb-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-100"
+                class="mb-4 p-3 bg-red-50 text-red-700 text-sm rounded-lg border border-red-200"
             >
 
-                <?= htmlspecialchars($erro, ENT_QUOTES, 'UTF-8') ?>
+                <?= htmlspecialchars(
+                    $erro,
+                    ENT_QUOTES,
+                    'UTF-8'
+                ) ?>
 
             </div>
 
         <?php endif; ?>
 
 
-        <!-- MENSAGEM DE SUCESSO -->
+        <!-- =================================================
+             MENSAGEM DE SUCESSO
+             ================================================= -->
 
-        <?php if ($sucesso): ?>
+        <?php if (!empty($sucesso)): ?>
 
             <div
-                class="mb-4 p-3 bg-green-50 text-green-700 text-sm rounded-lg border border-green-100"
+                class="mb-4 p-3 bg-green-50 text-green-700 text-sm rounded-lg border border-green-200"
             >
 
-                <?= htmlspecialchars($sucesso, ENT_QUOTES, 'UTF-8') ?>
+                <?= htmlspecialchars(
+                    $sucesso,
+                    ENT_QUOTES,
+                    'UTF-8'
+                ) ?>
 
                 <br>
 
@@ -210,7 +418,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     href="login.php"
                     class="underline font-medium"
                 >
+
                     Clique aqui para fazer login
+
                 </a>
 
             </div>
@@ -218,7 +428,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <?php endif; ?>
 
 
-        <!-- FORMULÁRIO -->
+        <!-- =================================================
+             FORMULÁRIO
+             ================================================= -->
 
         <form
             method="POST"
@@ -226,7 +438,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             class="space-y-4"
         >
 
-            <!-- NOME COMPLETO -->
+
+            <!-- =================================================
+                 NOME
+                 ================================================= -->
 
             <div>
 
@@ -234,8 +449,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     for="nomeCompleto"
                     class="block text-sm font-medium text-slate-700 mb-1"
                 >
+
                     Nome Completo *
+
                 </label>
+
 
                 <input
                     type="text"
@@ -243,16 +461,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     id="nomeCompleto"
                     required
                     autocomplete="name"
-                    value="<?= htmlspecialchars($_POST['nomeCompleto'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
-                    class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                    value="<?= htmlspecialchars(
+                        $_POST['nomeCompleto'] ?? '',
+                        ENT_QUOTES,
+                        'UTF-8'
+                    ) ?>"
+                    class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
                 >
 
             </div>
 
 
-            <!-- CPF + DATA DE NASCIMENTO -->
+            <!-- =================================================
+                 CPF + DATA DE NASCIMENTO
+                 ================================================= -->
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div
+                class="grid grid-cols-1 md:grid-cols-2 gap-4"
+            >
+
 
                 <!-- CPF -->
 
@@ -262,8 +489,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         for="cpf"
                         class="block text-sm font-medium text-slate-700 mb-1"
                     >
+
                         CPF *
+
                     </label>
+
 
                     <input
                         type="text"
@@ -272,16 +502,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         required
                         maxlength="14"
                         inputmode="numeric"
+                        autocomplete="off"
                         placeholder="000.000.000-00"
-                        autocomplete="username"
-                        value="<?= htmlspecialchars($_POST['cpf'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
-                        class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                        value="<?= htmlspecialchars(
+                            $_POST['cpf'] ?? '',
+                            ENT_QUOTES,
+                            'UTF-8'
+                        ) ?>"
+                        class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
                     >
 
                 </div>
 
 
-                <!-- DATA DE NASCIMENTO -->
+                <!-- =================================================
+                     DATA DE NASCIMENTO
+                     ================================================= -->
 
                 <div>
 
@@ -289,16 +525,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         for="dataNascimento"
                         class="block text-sm font-medium text-slate-700 mb-1"
                     >
+
                         Data de Nascimento *
+
                     </label>
 
+
                     <input
-                        type="date"
+                        type="text"
                         name="dataNascimento"
                         id="dataNascimento"
                         required
-                        value="<?= htmlspecialchars($_POST['dataNascimento'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
-                        class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                        maxlength="10"
+                        inputmode="numeric"
+                        autocomplete="bday"
+                        placeholder="dd/mm/aaaa"
+                        value="<?= htmlspecialchars(
+                            $_POST['dataNascimento'] ?? '',
+                            ENT_QUOTES,
+                            'UTF-8'
+                        ) ?>"
+                        class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
                     >
 
                 </div>
@@ -306,7 +553,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
 
 
-            <!-- E-MAIL -->
+            <!-- =================================================
+                 E-MAIL
+                 ================================================= -->
 
             <div>
 
@@ -314,8 +563,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     for="email"
                     class="block text-sm font-medium text-slate-700 mb-1"
                 >
+
                     E-mail *
+
                 </label>
+
 
                 <input
                     type="email"
@@ -323,15 +575,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     id="email"
                     required
                     autocomplete="email"
-                    placeholder="seuemail@email.com"
-                    value="<?= htmlspecialchars($_POST['email'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
-                    class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                    placeholder="seuemail@gmail.com"
+                    value="<?= htmlspecialchars(
+                        $_POST['email'] ?? '',
+                        ENT_QUOTES,
+                        'UTF-8'
+                    ) ?>"
+                    class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
                 >
 
             </div>
 
 
-            <!-- TELEFONE -->
+            <!-- =================================================
+                 TELEFONE
+                 ================================================= -->
 
             <div>
 
@@ -339,25 +597,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     for="telefone"
                     class="block text-sm font-medium text-slate-700 mb-1"
                 >
+
                     Telefone *
+
                 </label>
 
+
                 <input
-                    type="tel"
+                    type="text"
                     name="telefone"
                     id="telefone"
                     required
-                    inputmode="tel"
                     maxlength="15"
+                    inputmode="tel"
+                    autocomplete="tel"
                     placeholder="(83) 99999-9999"
-                    value="<?= htmlspecialchars($_POST['telefone'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
-                    class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                    value="<?= htmlspecialchars(
+                        $_POST['telefone'] ?? '',
+                        ENT_QUOTES,
+                        'UTF-8'
+                    ) ?>"
+                    class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
                 >
 
             </div>
 
 
-            <!-- CARTÃO SUS -->
+            <!-- =================================================
+                 CARTÃO SUS
+                 ================================================= -->
 
             <div>
 
@@ -365,9 +633,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     for="cartaoSus"
                     class="block text-sm font-medium text-slate-700 mb-1"
                 >
+
                     Cartão SUS
-                    <span class="text-slate-400 font-normal">(opcional)</span>
+                    <span class="text-slate-400">
+                        (opcional)
+                    </span>
+
                 </label>
+
 
                 <input
                     type="text"
@@ -376,16 +649,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     maxlength="20"
                     inputmode="numeric"
                     placeholder="Número do Cartão SUS"
-                    value="<?= htmlspecialchars($_POST['cartaoSus'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
-                    class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                    value="<?= htmlspecialchars(
+                        $_POST['cartaoSus'] ?? '',
+                        ENT_QUOTES,
+                        'UTF-8'
+                    ) ?>"
+                    class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
                 >
 
             </div>
 
 
-            <!-- SENHA + CONFIRMAÇÃO -->
+            <!-- =================================================
+                 SENHA + CONFIRMAR SENHA
+                 ================================================= -->
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div
+                class="grid grid-cols-1 md:grid-cols-2 gap-4"
+            >
+
 
                 <!-- SENHA -->
 
@@ -395,19 +677,98 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         for="senha"
                         class="block text-sm font-medium text-slate-700 mb-1"
                     >
+
                         Senha *
+
                     </label>
 
-                    <input
-                        type="password"
-                        name="senha"
-                        id="senha"
-                        required
-                        minlength="6"
-                        autocomplete="new-password"
-                        placeholder="Mínimo 6 caracteres"
-                        class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                    >
+
+                    <div class="relative">
+
+                        <input
+                            type="password"
+                            name="senha"
+                            id="senha"
+                            required
+                            minlength="6"
+                            autocomplete="new-password"
+                            placeholder="Mínimo 6 caracteres"
+                            class="w-full px-4 py-2.5 pr-12 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
+                        >
+
+
+                        <!-- BOTÃO OLHO -->
+
+                        <button
+                            type="button"
+                            onclick="alternarSenha('senha', 'olhoSenhaAberto', 'olhoSenhaFechado')"
+                            class="absolute right-0 top-0 h-full px-4 text-slate-500 hover:text-emerald-600"
+                            aria-label="Mostrar ou ocultar senha"
+                        >
+
+                            <!-- OLHO ABERTO -->
+
+                            <svg
+                                id="olhoSenhaAberto"
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="22"
+                                height="22"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+
+                                <path
+                                    d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"
+                                />
+
+                                <circle
+                                    cx="12"
+                                    cy="12"
+                                    r="3"
+                                />
+
+                            </svg>
+
+
+                            <!-- OLHO FECHADO -->
+
+                            <svg
+                                id="olhoSenhaFechado"
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="22"
+                                height="22"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="hidden"
+                            >
+
+                                <path d="M3 3l18 18"/>
+
+                                <path
+                                    d="M10.58 10.58a2 2 0 0 0 2.83 2.83"
+                                />
+
+                                <path
+                                    d="M9.88 4.24A9.77 9.77 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-3.16 4.19"
+                                />
+
+                                <path
+                                    d="M6.61 6.61C3.84 8.48 2 12 2 12s3 8 10 8a9.8 9.8 0 0 0 4.61-1.14"
+                                />
+
+                            </svg>
+
+                        </button>
+
+                    </div>
 
                 </div>
 
@@ -420,26 +781,107 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         for="confirmarSenha"
                         class="block text-sm font-medium text-slate-700 mb-1"
                     >
+
                         Confirmar Senha *
+
                     </label>
 
-                    <input
-                        type="password"
-                        name="confirmarSenha"
-                        id="confirmarSenha"
-                        required
-                        minlength="6"
-                        autocomplete="new-password"
-                        placeholder="Repita a senha"
-                        class="w-full px-4 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                    >
+
+                    <div class="relative">
+
+                        <input
+                            type="password"
+                            name="confirmarSenha"
+                            id="confirmarSenha"
+                            required
+                            minlength="6"
+                            autocomplete="new-password"
+                            placeholder="Repita a senha"
+                            class="w-full px-4 py-2.5 pr-12 rounded-lg border border-slate-300 focus:ring-2 focus:ring-emerald-500 outline-none"
+                        >
+
+
+                        <!-- BOTÃO OLHO -->
+
+                        <button
+                            type="button"
+                            onclick="alternarSenha('confirmarSenha', 'olhoConfirmarAberto', 'olhoConfirmarFechado')"
+                            class="absolute right-0 top-0 h-full px-4 text-slate-500 hover:text-emerald-600"
+                            aria-label="Mostrar ou ocultar confirmação de senha"
+                        >
+
+                            <!-- OLHO ABERTO -->
+
+                            <svg
+                                id="olhoConfirmarAberto"
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="22"
+                                height="22"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+
+                                <path
+                                    d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"
+                                />
+
+                                <circle
+                                    cx="12"
+                                    cy="12"
+                                    r="3"
+                                />
+
+                            </svg>
+
+
+                            <!-- OLHO FECHADO -->
+
+                            <svg
+                                id="olhoConfirmarFechado"
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="22"
+                                height="22"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="hidden"
+                            >
+
+                                <path d="M3 3l18 18"/>
+
+                                <path
+                                    d="M10.58 10.58a2 2 0 0 0 2.83 2.83"
+                                />
+
+                                <path
+                                    d="M9.88 4.24A9.77 9.77 0 0 1 12 4c7 0 10 8 10 8a18.5 18.5 0 0 1-3.16 4.19"
+                                />
+
+                                <path
+                                    d="M6.61 6.61C3.84 8.48 2 12 2 12s3 8 10 8a9.8 9.8 0 0 0 4.61-1.14"
+                                />
+
+                            </svg>
+
+                        </button>
+
+                    </div>
 
                 </div>
 
             </div>
 
 
-            <!-- LGPD -->
+            <!-- =================================================
+                 LGPD
+                 ================================================= -->
 
             <div class="flex items-start gap-3 pt-2">
 
@@ -448,8 +890,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     name="aceitaLgpd"
                     id="aceitaLgpd"
                     required
-                    class="mt-1 w-4 h-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500"
+                    class="mt-1 w-4 h-4 accent-emerald-600"
+                    <?= isset($_POST['aceitaLgpd']) ? 'checked' : '' ?>
                 >
+
 
                 <label
                     for="aceitaLgpd"
@@ -457,163 +901,305 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 >
 
                     Li e aceito os termos de uso e a
-                    <strong>Política de Privacidade (LGPD)</strong>.
+
+                    <strong>
+                        Política de Privacidade (LGPD)
+                    </strong>.
 
                 </label>
 
             </div>
 
 
-            <!-- BOTÃO -->
+            <!-- =================================================
+                 BOTÃO CADASTRAR
+                 ================================================= -->
 
             <button
                 type="submit"
-                class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 rounded-lg transition duration-200"
+                class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-3 rounded-lg transition"
             >
+
                 Criar minha conta
+
             </button>
+
 
         </form>
 
 
-        <!-- LOGIN -->
+        <!-- =================================================
+             LINK PARA LOGIN
+             ================================================= -->
 
-        <div class="text-center mt-6 text-sm text-slate-600">
+        <div class="text-center mt-6">
 
-            Já possui uma conta?
+            <p class="text-sm text-slate-500">
 
-            <a
-                href="login.php"
-                class="text-emerald-600 font-semibold hover:underline"
-            >
-                Fazer login
-            </a>
+                Já possui uma conta?
+
+                <a
+                    href="login.php"
+                    class="text-emerald-600 hover:text-emerald-700 font-medium"
+                >
+
+                    Fazer login
+
+                </a>
+
+            </p>
 
         </div>
+
 
     </div>
 
 
-    <!-- JAVASCRIPT -->
+    <!-- =====================================================
+         JAVASCRIPT
+         ===================================================== -->
 
     <script>
 
-        // =========================
-        // MÁSCARA CPF
-        // =========================
 
-        const cpfInput = document.getElementById('cpf');
+        // =====================================================
+        // MÁSCARA DO CPF
+        // =====================================================
 
-        cpfInput.addEventListener('input', function () {
+        const campoCpf =
+            document.getElementById('cpf');
 
-            let value = this.value.replace(/\D/g, '');
 
-            if (value.length > 11) {
-                value = value.substring(0, 11);
+        campoCpf.addEventListener(
+            'input',
+            function () {
+
+                let valor =
+                    this.value.replace(/\D/g, '');
+
+
+                if (valor.length > 11) {
+                    valor =
+                        valor.substring(0, 11);
+                }
+
+
+                if (valor.length > 9) {
+
+                    valor =
+                        valor.substring(0, 3) +
+                        '.' +
+                        valor.substring(3, 6) +
+                        '.' +
+                        valor.substring(6, 9) +
+                        '-' +
+                        valor.substring(9);
+
+                }
+
+                else if (valor.length > 6) {
+
+                    valor =
+                        valor.substring(0, 3) +
+                        '.' +
+                        valor.substring(3, 6) +
+                        '.' +
+                        valor.substring(6);
+
+                }
+
+                else if (valor.length > 3) {
+
+                    valor =
+                        valor.substring(0, 3) +
+                        '.' +
+                        valor.substring(3);
+
+                }
+
+
+                this.value = valor;
             }
-
-            value = value.replace(
-                /(\d{3})(\d)/,
-                '$1.$2'
-            );
-
-            value = value.replace(
-                /(\d{3})(\d)/,
-                '$1.$2'
-            );
-
-            value = value.replace(
-                /(\d{3})(\d{1,2})$/,
-                '$1-$2'
-            );
-
-            this.value = value;
-
-        });
+        );
 
 
-        // =========================
-        // MÁSCARA TELEFONE
-        // =========================
+        // =====================================================
+        // MÁSCARA DA DATA DE NASCIMENTO
+        // =====================================================
 
-        const telefoneInput = document.getElementById('telefone');
+        const campoData =
+            document.getElementById('dataNascimento');
 
-        telefoneInput.addEventListener('input', function () {
 
-            let value = this.value.replace(/\D/g, '');
+        campoData.addEventListener(
+            'input',
+            function () {
 
-            if (value.length > 11) {
-                value = value.substring(0, 11);
+                let valor =
+                    this.value.replace(/\D/g, '');
+
+
+                // Máximo: 8 números
+                // DD + MM + AAAA
+
+                if (valor.length > 8) {
+
+                    valor =
+                        valor.substring(0, 8);
+                }
+
+
+                // DD/MM/AAAA
+
+                if (valor.length > 4) {
+
+                    valor =
+                        valor.substring(0, 2) +
+                        '/' +
+                        valor.substring(2, 4) +
+                        '/' +
+                        valor.substring(4);
+
+                }
+
+                // DD/MM
+
+                else if (valor.length > 2) {
+
+                    valor =
+                        valor.substring(0, 2) +
+                        '/' +
+                        valor.substring(2);
+
+                }
+
+
+                this.value = valor;
             }
+        );
 
-            if (value.length <= 10) {
 
-                value = value.replace(
-                    /^(\d{2})(\d)/,
-                    '($1) $2'
+        // =====================================================
+        // MÁSCARA DO TELEFONE
+        // =====================================================
+
+        const campoTelefone =
+            document.getElementById('telefone');
+
+
+        campoTelefone.addEventListener(
+            'input',
+            function () {
+
+                let valor =
+                    this.value.replace(/\D/g, '');
+
+
+                if (valor.length > 11) {
+
+                    valor =
+                        valor.substring(0, 11);
+                }
+
+
+                if (valor.length > 10) {
+
+                    valor =
+                        '(' +
+                        valor.substring(0, 2) +
+                        ') ' +
+                        valor.substring(2, 7) +
+                        '-' +
+                        valor.substring(7);
+
+                }
+
+                else if (valor.length > 6) {
+
+                    valor =
+                        '(' +
+                        valor.substring(0, 2) +
+                        ') ' +
+                        valor.substring(2, 6) +
+                        '-' +
+                        valor.substring(6);
+
+                }
+
+                else if (valor.length > 2) {
+
+                    valor =
+                        '(' +
+                        valor.substring(0, 2) +
+                        ') ' +
+                        valor.substring(2);
+
+                }
+
+
+                this.value = valor;
+            }
+        );
+
+
+        // =====================================================
+        // MOSTRAR / ESCONDER SENHA
+        // =====================================================
+
+        function alternarSenha(
+            campoId,
+            olhoAbertoId,
+            olhoFechadoId
+        ) {
+
+            const campo =
+                document.getElementById(campoId);
+
+            const olhoAberto =
+                document.getElementById(
+                    olhoAbertoId
                 );
 
-                value = value.replace(
-                    /(\d{4})(\d)/,
-                    '$1-$2'
+            const olhoFechado =
+                document.getElementById(
+                    olhoFechadoId
                 );
 
-            } else {
 
-                value = value.replace(
-                    /^(\d{2})(\d)/,
-                    '($1) $2'
+            // Mostrar senha
+
+            if (campo.type === 'password') {
+
+                campo.type = 'text';
+
+                olhoAberto.classList.add(
+                    'hidden'
                 );
 
-                value = value.replace(
-                    /(\d{5})(\d)/,
-                    '$1-$2'
+                olhoFechado.classList.remove(
+                    'hidden'
                 );
 
             }
 
-            this.value = value;
+            // Esconder senha
 
-        });
+            else {
 
+                campo.type = 'password';
 
-        // =========================
-        // CARTÃO SUS
-        // =========================
+                olhoFechado.classList.add(
+                    'hidden'
+                );
 
-        const cartaoSusInput = document.getElementById('cartaoSus');
-
-        cartaoSusInput.addEventListener('input', function () {
-
-            this.value = this.value
-                .replace(/\D/g, '')
-                .substring(0, 20);
-
-        });
-
-
-        // =========================
-        // VALIDAÇÃO DAS SENHAS
-        // =========================
-
-        const form = document.querySelector('form');
-
-        form.addEventListener('submit', function (event) {
-
-            const senha = document.getElementById('senha').value;
-            const confirmarSenha = document.getElementById('confirmarSenha').value;
-
-            if (senha !== confirmarSenha) {
-
-                event.preventDefault();
-
-                alert('As senhas não coincidem.');
-
+                olhoAberto.classList.remove(
+                    'hidden'
+                );
             }
-
-        });
+        }
 
     </script>
+
 
 </body>
 

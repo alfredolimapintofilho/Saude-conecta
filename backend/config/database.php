@@ -1,28 +1,45 @@
 <?php
 
-class Database {
-    private static $host = 'localhost';
-    private static $db_name = 'saude_conecta';   // ← nome do banco
-    private static $username = 'root';
-    private static $password = '';               // senha vazia (padrão do XAMPP)
-    private static $conn = null;
+class Database
+{
+    private static $connection = null;
 
-    public static function getConnection() {
-        if (self::$conn === null) {
+    public static function getConnection()
+    {
+        if (self::$connection === null) {
+
+            $host = 'localhost';
+            $dbname = 'saude_conecta';
+            $username = 'root';
+            $password = '';
+
             try {
-                self::$conn = new PDO(
-                    "mysql:host=" . self::$host . ";dbname=" . self::$db_name . ";charset=utf8mb4",
-                    self::$username,
-                    self::$password,
-                    [
-                        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC
-                    ]
+
+                self::$connection = new PDO(
+                    "mysql:host=$host;dbname=$dbname;charset=utf8mb4",
+                    $username,
+                    $password
                 );
-            } catch (PDOException $exception) {
-                die(json_encode(["error" => "Erro na conexão com o banco: " . $exception->getMessage()]));
+
+                self::$connection->setAttribute(
+                    PDO::ATTR_ERRMODE,
+                    PDO::ERRMODE_EXCEPTION
+                );
+
+                self::$connection->setAttribute(
+                    PDO::ATTR_DEFAULT_FETCH_MODE,
+                    PDO::FETCH_ASSOC
+                );
+
+            } catch (PDOException $e) {
+
+                die(
+                    'Erro na conexão com o banco de dados: ' .
+                    $e->getMessage()
+                );
             }
         }
-        return self::$conn;
+
+        return self::$connection;
     }
 }
