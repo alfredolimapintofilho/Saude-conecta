@@ -1,12 +1,9 @@
 <?php
 
-// Inicia a sessão
 session_start();
 
-// Remove todos os dados armazenados na sessão
 $_SESSION = [];
 
-// Remove o cookie da sessão, caso esteja sendo utilizado
 if (ini_get('session.use_cookies')) {
 
     $params = session_get_cookie_params();
@@ -22,11 +19,8 @@ if (ini_get('session.use_cookies')) {
     );
 }
 
-// Destrói a sessão
 session_destroy();
 
-// Redireciona para o login
 header('Location: ../pages/login.php');
-exit;
 
-?>
+exit;
