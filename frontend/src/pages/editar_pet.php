@@ -1,5 +1,5 @@
-<?php
 
+<?php
 session_start();
 
 if (!isset($_SESSION['usuario'])) {
@@ -9,113 +9,28 @@ if (!isset($_SESSION['usuario'])) {
 
 require_once __DIR__ . '/../../../backend/config/database.php';
 
-try {
-    $pdo = Database::getConnection();
-} catch (Exception $e) {
-    die('Erro ao conectar ao banco de dados: ' . $e->getMessage());
-}
+$pdo = Database::getConnection();
 
-/*
-|--------------------------------------------------------------------------
-| IDENTIFICAR USUÁRIO
-|--------------------------------------------------------------------------
-*/
-
-$usuarioSessao = $_SESSION['usuario'];
-
-$usuarioId = 0;
-
-if (is_array($usuarioSessao)) {
-    $usuarioId = (int) (
-        $usuarioSessao['id']
-        ?? $usuarioSessao['usuario_id']
-        ?? 0
-    );
-} else {
-    $usuarioId = (int) $usuarioSessao;
-}
+$sessaoUsuario = $_SESSION['usuario'];
+$usuarioId = is_array($sessaoUsuario)
+    ? (int) ($sessaoUsuario['id'] ?? 0)
+    : (int) $sessaoUsuario;
 
 if ($usuarioId <= 0) {
+    session_unset();
     session_destroy();
     header('Location: login.php');
     exit;
 }
 
-/*
-|--------------------------------------------------------------------------
-| ID DO PET
-|--------------------------------------------------------------------------
-*/
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
 
-$petId = isset($_GET['id']) ? (int) $_GET['id'] : 0;
-
-if ($petId <= 0) {
-    header('Location: pets.php');
-    exit;
-}
-
-/*
-|--------------------------------------------------------------------------
-| BUSCAR PET
-|--------------------------------------------------------------------------
-*/
-
-try {
-
-    $stmt = $pdo->prepare("
-        SELECT *
-        FROM pets
-        WHERE id = ?
-        AND usuario_id = ?
-        LIMIT 1
-    ");
-
-    $stmt->execute([
-        $petId,
-        $usuarioId
-    ]);
-
-    $pet = $stmt->fetch(PDO::FETCH_ASSOC);
-
-    if (!$pet) {
-        header('Location: pets.php');
-        exit;
-    }
-
-} catch (PDOException $e) {
-
-    die(
-        'Erro ao carregar o pet: ' .
-        htmlspecialchars(
-            $e->getMessage(),
-            ENT_QUOTES,
-            'UTF-8'
-        )
-    );
-}
-
-/*
-|--------------------------------------------------------------------------
-| FUNÇÕES DE DATA
-|--------------------------------------------------------------------------
-*/
-
-function dataParaBrasileiro($data)
+function e($valor): string
 {
-    if (empty($data)) {
-        return '';
-    }
-
-    $partes = explode('-', $data);
-
-    if (count($partes) === 3) {
-        return $partes[2] . '/' . $partes[1] . '/' . $partes[0];
-    }
-
-    return $data;
+    return htmlspecialchars((string) ($valor ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
-function dataParaMysql($data)
+function dataParaBanco(string $data): ?string
 {
     $data = trim($data);
 
@@ -123,394 +38,415 @@ function dataParaMysql($data)
         return null;
     }
 
-    if (!preg_match('/^\d{2}\/\d{2}\/\d{4}$/', $data)) {
-        return false;
+    $objeto = DateTime::createFromFormat('!d/m/Y', $data);
+    $erros = DateTime::getLastErrors();
+
+    if (
+        !$objeto ||
+        ($erros !== false &&
+            ($erros['warning_count'] > 0 || $erros['error_count'] > 0)) ||
+        $objeto->format('d/m/Y') !== $data
+    ) {
+        throw new InvalidArgumentException(
+            'A data de nascimento deve estar no formato DD/MM/AAAA.'
+        );
     }
 
-    $partes = explode('/', $data);
-
-    $dia = (int) $partes[0];
-    $mes = (int) $partes[1];
-    $ano = (int) $partes[2];
-
-    if (!checkdate($mes, $dia, $ano)) {
-        return false;
+    if ($objeto > new DateTime('today')) {
+        throw new InvalidArgumentException(
+            'A data de nascimento não pode ser no futuro.'
+        );
     }
 
-    return sprintf(
-        '%04d-%02d-%02d',
-        $ano,
-        $mes,
-        $dia
-    );
+    return $objeto->format('Y-m-d');
+}
+
+function dataParaTela(?string $data): string
+{
+    if (!$data || $data === '0000-00-00') {
+        return '';
+    }
+
+    $objeto = DateTime::createFromFormat('!Y-m-d', $data);
+
+    return $objeto ? $objeto->format('d/m/Y') : '';
+}
+
+$tiposPermitidos = [
+    'Companhia',
+    'Trabalho e transporte',
+    'Produção',
+    'Outro'
+];
+
+$especiesPermitidas = [
+    'Cachorro',
+    'Gato',
+    'Hamster',
+    'Porquinho-da-índia',
+    'Coelho',
+    'Cavalo',
+    'Jumento',
+    'Bovino',
+    'Porco',
+    'Ovelha',
+    'Cabra',
+    'Galinha',
+    'Pato',
+    'Outro'
+];
+
+$sexosPermitidos = [
+    'Macho',
+    'Fêmea',
+    'Não identificado'
+];
+
+$portesPermitidos = [
+    'Pequeno',
+    'Médio',
+    'Grande',
+    'Não informado'
+];
+
+$id = filter_input(INPUT_GET, 'id', FILTER_VALIDATE_INT);
+
+if (!$id || $id <= 0) {
+    header('Location: pets.php?erro=id_invalido');
+    exit;
 }
 
 /*
 |--------------------------------------------------------------------------
-| VARIÁVEIS
+| Buscar o pet pertencente ao usuário conectado
 |--------------------------------------------------------------------------
 */
 
-$nome = $pet['nome'] ?? '';
-$tipo = $pet['tipo'] ?? '';
-$especie = $pet['especie'] ?? '';
-$raca = $pet['raca'] ?? '';
-$sexo = $pet['sexo'] ?? '';
-$dataNascimento = dataParaBrasileiro(
-    $pet['data_nascimento'] ?? ''
-);
-$cor = $pet['cor'] ?? '';
-$peso = $pet['peso'] ?? '';
-$microchip = $pet['microchip'] ?? '';
-$vacinado = $pet['vacinado'] ?? '';
-$castrado = $pet['castrado'] ?? '';
-$alergias = $pet['alergias'] ?? '';
-$doencas = $pet['doencas'] ?? '';
-$medicamentos = $pet['medicamentos'] ?? '';
-$observacoes = $pet['observacoes'] ?? '';
-$fotoAtual = $pet['foto'] ?? '';
+try {
+    $consulta = $pdo->prepare(
+        'SELECT *
+         FROM pets
+         WHERE id = :id AND usuario_id = :usuario_id
+         LIMIT 1'
+    );
+
+    $consulta->execute([
+        'id' => $id,
+        'usuario_id' => $usuarioId
+    ]);
+
+    $pet = $consulta->fetch(PDO::FETCH_ASSOC);
+
+    if (!$pet) {
+        header('Location: pets.php?erro=pet_nao_encontrado');
+        exit;
+    }
+} catch (PDOException $erro) {
+    error_log('Erro ao consultar pet para edição: ' . $erro->getMessage());
+    http_response_code(500);
+    exit('Não foi possível carregar os dados do pet.');
+}
+
+if (empty($_SESSION['csrf_editar_pet'])) {
+    $_SESSION['csrf_editar_pet'] = bin2hex(random_bytes(32));
+}
 
 $erro = '';
-$mensagem = '';
+$sucesso = '';
 
 /*
 |--------------------------------------------------------------------------
-| SALVAR ALTERAÇÕES
+| Salvar alterações
 |--------------------------------------------------------------------------
 */
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $fotoNovaSalva = null;
 
-    $nome = trim($_POST['nome'] ?? '');
-    $tipo = trim($_POST['tipo'] ?? '');
-    $especie = trim($_POST['especie'] ?? '');
-    $raca = trim($_POST['raca'] ?? '');
-    $sexo = trim($_POST['sexo'] ?? '');
-
-    $dataNascimento = trim(
-        $_POST['data_nascimento'] ?? ''
-    );
-
-    $cor = trim($_POST['cor'] ?? '');
-    $peso = trim($_POST['peso'] ?? '');
-    $microchip = trim($_POST['microchip'] ?? '');
-
-    $vacinado = trim($_POST['vacinado'] ?? '');
-    $castrado = trim($_POST['castrado'] ?? '');
-
-    $alergias = trim($_POST['alergias'] ?? '');
-    $doencas = trim($_POST['doencas'] ?? '');
-    $medicamentos = trim($_POST['medicamentos'] ?? '');
-    $observacoes = trim($_POST['observacoes'] ?? '');
-
-    /*
-    |--------------------------------------------------------------------------
-    | VALIDAR CAMPOS OBRIGATÓRIOS
-    |--------------------------------------------------------------------------
-    */
-
-    if ($nome === '') {
-
-        $erro = 'Informe o nome do pet.';
-
-    } elseif ($tipo === '') {
-
-        $erro = 'Informe o tipo do pet.';
-
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | VALIDAR DATA
-    |--------------------------------------------------------------------------
-    */
-
-    $dataNascimentoMysql = null;
-
-    if ($erro === '') {
-
-        $dataNascimentoMysql = dataParaMysql(
-            $dataNascimento
-        );
-
-        if ($dataNascimentoMysql === false) {
-
-            $erro =
-                'A data de nascimento deve estar no formato DD/MM/AAAA.';
-        }
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | VALIDAR PESO
-    |--------------------------------------------------------------------------
-    */
-
-    $pesoBanco = null;
-
-    if ($erro === '' && $peso !== '') {
-
-        if (!is_numeric($peso) || (float) $peso <= 0) {
-
-            $erro = 'Informe um peso válido.';
-
-        } else {
-
-            $pesoBanco = (float) $peso;
-        }
-    }
-
-    /*
-    |--------------------------------------------------------------------------
-    | FOTO
-    |--------------------------------------------------------------------------
-    */
-
-    $fotoBanco = $fotoAtual;
-
-    if (
-        $erro === '' &&
-        isset($_FILES['foto']) &&
-        $_FILES['foto']['error'] !== UPLOAD_ERR_NO_FILE
-    ) {
-
-        if ($_FILES['foto']['error'] !== UPLOAD_ERR_OK) {
-
-            $erro = 'Erro ao enviar a foto.';
-
-        } else {
-
-            $arquivo = $_FILES['foto'];
-
-            $extensao = strtolower(
-                pathinfo(
-                    $arquivo['name'],
-                    PATHINFO_EXTENSION
-                )
+    try {
+        if (
+            !isset($_POST['csrf_token']) ||
+            !hash_equals(
+                $_SESSION['csrf_editar_pet'],
+                (string) $_POST['csrf_token']
+            )
+        ) {
+            throw new InvalidArgumentException(
+                'O formulário expirou. Atualize a página e tente novamente.'
             );
+        }
 
-            $extensoesPermitidas = [
-                'jpg',
-                'jpeg',
-                'png',
-                'webp'
-            ];
+        $nome = trim($_POST['nome'] ?? '');
+        $tipo = trim($_POST['tipo'] ?? '');
+        $especie = trim($_POST['especie'] ?? '');
+        $raca = trim($_POST['raca'] ?? '');
+        $sexo = trim($_POST['sexo'] ?? '');
+        $dataNascimentoTexto = trim($_POST['data_nascimento'] ?? '');
+        $cor = trim($_POST['cor'] ?? '');
+        $porte = trim($_POST['porte'] ?? 'Não informado');
+        $pesoTexto = trim($_POST['peso'] ?? '');
+        $microchip = trim($_POST['microchip'] ?? '');
+        $vacinado = isset($_POST['vacinado']) ? 1 : 0;
+        $castrado = isset($_POST['castrado']) ? 1 : 0;
+        $alergias = trim($_POST['alergias'] ?? '');
+        $doencas = trim($_POST['doencas'] ?? '');
+        $medicamentos = trim($_POST['medicamentos'] ?? '');
+        $observacoes = trim($_POST['observacoes'] ?? '');
 
-            if (!in_array(
-                $extensao,
-                $extensoesPermitidas,
-                true
-            )) {
+        if ($nome === '' || mb_strlen($nome) > 100) {
+            throw new InvalidArgumentException(
+                'Informe o nome do pet, com até 100 caracteres.'
+            );
+        }
 
-                $erro =
-                    'Formato de imagem inválido. Use JPG, JPEG, PNG ou WEBP.';
+        if (!in_array($tipo, $tiposPermitidos, true)) {
+            throw new InvalidArgumentException('Selecione uma categoria válida.');
+        }
 
-            } elseif ($arquivo['size'] > 5 * 1024 * 1024) {
+        if (!in_array($especie, $especiesPermitidas, true)) {
+            throw new InvalidArgumentException('Selecione uma espécie válida.');
+        }
 
-                $erro =
-                    'A foto deve ter no máximo 5 MB.';
+        if (!in_array($sexo, $sexosPermitidos, true)) {
+            throw new InvalidArgumentException('Selecione um sexo válido.');
+        }
 
-            } else {
+        if (!in_array($porte, $portesPermitidos, true)) {
+            throw new InvalidArgumentException('Selecione um porte válido.');
+        }
 
-                $pastaFotos =
-                    __DIR__ . '/../uploads/pets/';
+        if (
+            mb_strlen($raca) > 100 ||
+            mb_strlen($cor) > 100 ||
+            mb_strlen($microchip) > 100
+        ) {
+            throw new InvalidArgumentException(
+                'Raça, cor e microchip devem ter no máximo 100 caracteres.'
+            );
+        }
 
-                if (!is_dir($pastaFotos)) {
+        if (
+            mb_strlen($alergias) > 5000 ||
+            mb_strlen($doencas) > 5000 ||
+            mb_strlen($medicamentos) > 5000 ||
+            mb_strlen($observacoes) > 5000
+        ) {
+            throw new InvalidArgumentException(
+                'Os campos de saúde e observações devem ter no máximo 5.000 caracteres.'
+            );
+        }
 
-                    mkdir(
-                        $pastaFotos,
-                        0777,
-                        true
-                    );
-                }
+        $dataNascimento = dataParaBanco($dataNascimentoTexto);
 
-                $novoNome =
-                    'pet_' .
-                    $petId .
-                    '_' .
-                    time() .
-                    '_' .
-                    bin2hex(random_bytes(4)) .
-                    '.' .
-                    $extensao;
+        $peso = null;
 
-                $caminhoCompleto =
-                    $pastaFotos . $novoNome;
+        if ($pesoTexto !== '') {
+            $pesoNormalizado = str_replace(',', '.', $pesoTexto);
 
-                if (
-                    move_uploaded_file(
-                        $arquivo['tmp_name'],
-                        $caminhoCompleto
-                    )
-                ) {
+            if (!is_numeric($pesoNormalizado)) {
+                throw new InvalidArgumentException('Informe um peso válido.');
+            }
 
-                    /*
-                    |--------------------------------------------------------------------------
-                    | APAGAR FOTO ANTIGA
-                    |--------------------------------------------------------------------------
-                    */
+            $peso = (float) $pesoNormalizado;
 
-                    if (
-                        $fotoAtual !== '' &&
-                        strpos($fotoAtual, 'uploads/pets/') === 0
-                    ) {
-
-                        $arquivoAntigo =
-                            __DIR__ .
-                            '/../' .
-                            $fotoAtual;
-
-                        if (is_file($arquivoAntigo)) {
-                            @unlink($arquivoAntigo);
-                        }
-                    }
-
-                    $fotoBanco =
-                        'uploads/pets/' .
-                        $novoNome;
-
-                } else {
-
-                    $erro =
-                        'Não foi possível salvar a nova foto.';
-                }
+            if ($peso <= 0 || $peso > 2000) {
+                throw new InvalidArgumentException(
+                    'O peso deve ser maior que zero e não ultrapassar 2.000 kg.'
+                );
             }
         }
-    }
 
-    /*
-    |--------------------------------------------------------------------------
-    | ATUALIZAR PET
-    |--------------------------------------------------------------------------
-    */
+        /*
+         * A foto atual é mantida se o usuário não selecionar outra.
+         */
+        $foto = $pet['foto'] ?? null;
 
-    if ($erro === '') {
+        if (
+            isset($_FILES['foto']) &&
+            $_FILES['foto']['error'] !== UPLOAD_ERR_NO_FILE
+        ) {
+            if ($_FILES['foto']['error'] !== UPLOAD_ERR_OK) {
+                throw new InvalidArgumentException(
+                    'Não foi possível enviar a nova foto.'
+                );
+            }
 
-        try {
+            if ($_FILES['foto']['size'] > 4 * 1024 * 1024) {
+                throw new InvalidArgumentException(
+                    'A foto deve ter no máximo 4 MB.'
+                );
+            }
 
-            $stmt = $pdo->prepare("
-                UPDATE pets
-                SET
-                    nome = ?,
-                    tipo = ?,
-                    especie = ?,
-                    raca = ?,
-                    sexo = ?,
-                    data_nascimento = ?,
-                    cor = ?,
-                    peso = ?,
-                    microchip = ?,
-                    vacinado = ?,
-                    castrado = ?,
-                    alergias = ?,
-                    doencas = ?,
-                    medicamentos = ?,
-                    observacoes = ?,
-                    foto = ?
-                WHERE id = ?
-                AND usuario_id = ?
-            ");
+            $temporario = $_FILES['foto']['tmp_name'];
 
-            $stmt->execute([
+            if (!is_uploaded_file($temporario)) {
+                throw new InvalidArgumentException('O arquivo enviado é inválido.');
+            }
 
-                $nome,
+            $finfo = new finfo(FILEINFO_MIME_TYPE);
+            $mime = $finfo->file($temporario);
 
-                $tipo,
+            $extensoes = [
+                'image/jpeg' => 'jpg',
+                'image/png' => 'png',
+                'image/webp' => 'webp'
+            ];
 
-                $especie !== ''
-                    ? $especie
-                    : null,
+            if (!isset($extensoes[$mime])) {
+                throw new InvalidArgumentException(
+                    'Envie uma imagem JPG, PNG ou WEBP.'
+                );
+            }
 
-                $raca !== ''
-                    ? $raca
-                    : null,
+            $pastaFotos = __DIR__ . '/uploads/pets';
 
-                $sexo !== ''
-                    ? $sexo
-                    : null,
+            if (
+                !is_dir($pastaFotos) &&
+                !mkdir($pastaFotos, 0755, true) &&
+                !is_dir($pastaFotos)
+            ) {
+                throw new RuntimeException(
+                    'Não foi possível criar a pasta para fotos dos pets.'
+                );
+            }
 
-                $dataNascimentoMysql,
+            $nomeArquivo = bin2hex(random_bytes(16)) . '.' . $extensoes[$mime];
+            $destino = $pastaFotos . '/' . $nomeArquivo;
 
-                $cor !== ''
-                    ? $cor
-                    : null,
+            if (!move_uploaded_file($temporario, $destino)) {
+                throw new RuntimeException('Não foi possível salvar a nova foto.');
+            }
 
-                $pesoBanco,
-
-                $microchip !== ''
-                    ? $microchip
-                    : null,
-
-                $vacinado !== ''
-                    ? $vacinado
-                    : null,
-
-                $castrado !== ''
-                    ? $castrado
-                    : null,
-
-                $alergias !== ''
-                    ? $alergias
-                    : null,
-
-                $doencas !== ''
-                    ? $doencas
-                    : null,
-
-                $medicamentos !== ''
-                    ? $medicamentos
-                    : null,
-
-                $observacoes !== ''
-                    ? $observacoes
-                    : null,
-
-                $fotoBanco !== ''
-                    ? $fotoBanco
-                    : null,
-
-                $petId,
-
-                $usuarioId
-            ]);
-
-            header(
-                'Location: pet.php?id=' .
-                $petId .
-                '&atualizado=1'
-            );
-
-            exit;
-
-        } catch (PDOException $e) {
-
-            $erro =
-                'Erro ao atualizar o pet: ' .
-                $e->getMessage();
+            $fotoNovaSalva = 'uploads/pets/' . $nomeArquivo;
+            $foto = $fotoNovaSalva;
         }
+
+        /*
+         * O SQL atualiza somente o pet do usuário autenticado.
+         */
+        $sql = 'UPDATE pets SET
+                    nome = :nome,
+                    tipo = :tipo,
+                    especie = :especie,
+                    raca = :raca,
+                    sexo = :sexo,
+                    data_nascimento = :data_nascimento,
+                    cor = :cor,
+                    porte = :porte,
+                    peso = :peso,
+                    microchip = :microchip,
+                    vacinado = :vacinado,
+                    castrado = :castrado,
+                    alergias = :alergias,
+                    doencas = :doencas,
+                    medicamentos = :medicamentos,
+                    observacoes = :observacoes,
+                    foto = :foto
+                WHERE id = :id AND usuario_id = :usuario_id';
+
+        $atualizacao = $pdo->prepare($sql);
+
+        $atualizacao->execute([
+            'nome' => $nome,
+            'tipo' => $tipo,
+            'especie' => $especie,
+            'raca' => $raca !== '' ? $raca : null,
+            'sexo' => $sexo,
+            'data_nascimento' => $dataNascimento,
+            'cor' => $cor !== '' ? $cor : null,
+            'porte' => $porte,
+            'peso' => $peso,
+            'microchip' => $microchip !== '' ? $microchip : null,
+            'vacinado' => $vacinado,
+            'castrado' => $castrado,
+            'alergias' => $alergias !== '' ? $alergias : null,
+            'doencas' => $doencas !== '' ? $doencas : null,
+            'medicamentos' => $medicamentos !== '' ? $medicamentos : null,
+            'observacoes' => $observacoes !== '' ? $observacoes : null,
+            'foto' => $foto,
+            'id' => $id,
+            'usuario_id' => $usuarioId
+        ]);
+
+        /*
+         * Se uma foto nova foi salva, remove a antiga depois da atualização.
+         */
+        if (
+            $fotoNovaSalva !== null &&
+            !empty($pet['foto']) &&
+            $pet['foto'] !== $fotoNovaSalva
+        ) {
+            $fotoAntiga = __DIR__ . '/' . $pet['foto'];
+
+            if (is_file($fotoAntiga)) {
+                unlink($fotoAntiga);
+            }
+        }
+
+        unset($_SESSION['csrf_editar_pet']);
+
+        /*
+         * CORREÇÃO DO ERRO:
+         * Não redireciona para pet.php, que estava retornando Not Found.
+         * Volta para a lista de pets, que já existe no projeto.
+         */
+        header('Location: pets.php?atualizado=1');
+        exit;
+
+    } catch (InvalidArgumentException $ex) {
+        $erro = $ex->getMessage();
+    } catch (Throwable $ex) {
+        error_log('Erro ao editar pet: ' . $ex->getMessage());
+
+        if ($fotoNovaSalva !== null) {
+            $caminhoFoto = __DIR__ . '/' . $fotoNovaSalva;
+
+            if (is_file($caminhoFoto)) {
+                unlink($caminhoFoto);
+            }
+        }
+
+        $erro = 'Não foi possível atualizar o pet. Confira as colunas da tabela pets e tente novamente.';
     }
+}
+
+/*
+ * Recarrega o cadastro para exibir os valores atuais.
+ */
+try {
+    $consulta = $pdo->prepare(
+        'SELECT *
+         FROM pets
+         WHERE id = :id AND usuario_id = :usuario_id
+         LIMIT 1'
+    );
+
+    $consulta->execute([
+        'id' => $id,
+        'usuario_id' => $usuarioId
+    ]);
+
+    $pet = $consulta->fetch(PDO::FETCH_ASSOC);
+
+    if (!$pet) {
+        header('Location: pets.php?erro=pet_nao_encontrado');
+        exit;
+    }
+} catch (PDOException $ex) {
+    error_log('Erro ao recarregar pet: ' . $ex->getMessage());
+    http_response_code(500);
+    exit('Não foi possível recarregar os dados do pet.');
 }
 
 ?>
 <!DOCTYPE html>
-
 <html lang="pt-BR">
-
 <head>
-
     <meta charset="UTF-8">
-
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
-    <title>
-        Editar Pet - Saúde-Conecta
-    </title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editar Pet | Saúde-Conecta</title>
 
     <style>
-
         * {
             box-sizing: border-box;
         }
@@ -518,907 +454,426 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         body {
             margin: 0;
             font-family: Arial, Helvetica, sans-serif;
-            background: #f1f5f9;
-            color: #1e293b;
+            background: #f2f6f8;
+            color: #20313b;
         }
 
         header {
-            background: #0f766e;
+            background: #087f8c;
             color: white;
-            padding: 18px 25px;
+            padding: 22px 16px;
         }
 
-        .header-container {
+        .cabecalho,
+        main {
             max-width: 1000px;
             margin: auto;
+        }
+
+        .cabecalho {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            gap: 20px;
-        }
-
-        .logo {
-            font-size: 22px;
-            font-weight: bold;
-        }
-
-        nav {
-            display: flex;
-            gap: 8px;
+            gap: 12px;
             flex-wrap: wrap;
         }
 
-        nav a {
-            color: white;
-            text-decoration: none;
-            padding: 9px 13px;
-            border-radius: 8px;
-            background: rgba(255,255,255,0.12);
+        header h1 {
+            margin: 0;
+            font-size: 26px;
         }
 
-        nav a:hover {
-            background: rgba(255,255,255,0.22);
+        header p {
+            margin: 6px 0 0;
+        }
+
+        .voltar {
+            color: white;
+            text-decoration: none;
+            border: 1px solid white;
+            padding: 10px 14px;
+            border-radius: 8px;
         }
 
         main {
-            max-width: 1000px;
-            margin: 30px auto;
-            padding: 0 20px 50px;
+            padding: 25px 16px 40px;
         }
 
-        .titulo {
-            margin-bottom: 20px;
+        .cartao {
+            background: white;
+            padding: 25px;
+            border-radius: 13px;
+            box-shadow: 0 3px 14px rgba(0, 0, 0, .06);
         }
 
-        .titulo h1 {
-            margin-bottom: 5px;
-        }
-
-        .titulo p {
-            color: #64748b;
+        h2 {
+            color: #075e68;
             margin-top: 0;
         }
 
-        .card {
-            background: white;
-            border-radius: 15px;
-            padding: 25px;
-            box-shadow: 0 4px 18px rgba(15, 23, 42, 0.08);
-        }
-
-        .erro {
-            background: #fee2e2;
-            color: #991b1b;
-            border: 1px solid #fca5a5;
-            padding: 14px;
-            border-radius: 10px;
-            margin-bottom: 20px;
+        .grade {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 17px;
         }
 
         .campo {
-            margin-bottom: 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
         }
 
         .campo label {
-            display: block;
+            font-size: 14px;
             font-weight: bold;
-            margin-bottom: 7px;
         }
 
-        .campo input,
-        .campo select,
-        .campo textarea {
+        input,
+        select,
+        textarea {
             width: 100%;
-            padding: 12px;
-            border: 1px solid #cbd5e1;
-            border-radius: 9px;
-            font-size: 15px;
+            border: 1px solid #bdcdd3;
+            border-radius: 7px;
+            padding: 11px;
+            font: inherit;
             background: white;
         }
 
-        .campo textarea {
-            min-height: 110px;
+        textarea {
+            min-height: 90px;
             resize: vertical;
         }
 
-        .linha {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 18px;
+        .completo,
+        .subtitulo,
+        .checkboxes {
+            grid-column: 1 / -1;
+        }
+
+        .subtitulo {
+            border-bottom: 1px solid #e0e9ec;
+            color: #087f8c;
+            padding-bottom: 9px;
+            margin: 12px 0 0;
+            font-size: 18px;
+        }
+
+        .checkboxes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .checkbox {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+        }
+
+        .checkbox input {
+            width: auto;
         }
 
         .foto-atual {
-            margin-bottom: 20px;
-            text-align: center;
-        }
-
-        .foto-atual img {
-            width: 180px;
-            height: 180px;
+            width: 170px;
+            max-height: 170px;
             object-fit: cover;
-            border-radius: 15px;
-            border: 3px solid #e2e8f0;
+            border-radius: 10px;
+            margin-bottom: 10px;
         }
 
-        .sem-foto {
-            width: 180px;
-            height: 180px;
-            margin: auto;
-            border-radius: 15px;
-            background: #e2e8f0;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #64748b;
+        .nota {
+            font-size: 13px;
+            color: #62737b;
         }
 
-        .botoes {
+        .mensagem {
+            padding: 13px 15px;
+            border-radius: 8px;
+            background: #fff0ed;
+            color: #982e20;
+            margin-bottom: 18px;
+        }
+
+        .acoes {
             display: flex;
-            gap: 10px;
             flex-wrap: wrap;
+            gap: 12px;
             margin-top: 25px;
         }
 
         .botao {
-            border: 0;
-            padding: 12px 20px;
-            border-radius: 9px;
-            background: #0f766e;
-            color: white;
+            display: inline-block;
+            padding: 12px 19px;
+            border: none;
+            border-radius: 8px;
             font-size: 15px;
             text-decoration: none;
             cursor: pointer;
-            display: inline-block;
         }
 
-        .botao:hover {
-            background: #115e59;
+        .primario {
+            color: white;
+            background: #087f8c;
         }
 
-        .botao-cinza {
-            background: #475569;
+        .secundario {
+            color: #075e68;
+            background: #e8f3f5;
         }
 
-        .botao-cinza:hover {
-            background: #334155;
-        }
-
-        .botao-azul {
-            background: #2563eb;
-        }
-
-        .botao-azul:hover {
-            background: #1d4ed8;
-        }
-
-        .observacao {
-            color: #64748b;
-            font-size: 13px;
-            margin-top: 5px;
-        }
-
-        @media (max-width: 700px) {
-
-            .header-container {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-
-            .linha {
+        @media (max-width: 650px) {
+            .grade {
                 grid-template-columns: 1fr;
             }
 
+            .completo,
+            .subtitulo,
+            .checkboxes {
+                grid-column: auto;
+            }
+
+            .cartao {
+                padding: 18px;
+            }
         }
-
     </style>
-
 </head>
 
 <body>
-
 <header>
-
-    <div class="header-container">
-
-        <div class="logo">
-            Saúde-Conecta
+    <div class="cabecalho">
+        <div>
+            <h1>Saúde-Conecta</h1>
+            <p>Editar cadastro do pet</p>
         </div>
 
-        <nav>
-
-            <a href="perfil_saude.php">
-                Meu Perfil
-            </a>
-
-            <a href="pets.php">
-                Meus Pets
-            </a>
-
-            <a href="pet.php?id=<?= $petId ?>">
-                Perfil do Pet
-            </a>
-
-            <a href="logout.php">
-                Sair
-            </a>
-
-        </nav>
-
+        <a class="voltar" href="pets.php">Voltar para Meus Pets</a>
     </div>
-
 </header>
 
 <main>
+    <div class="cartao">
+        <h2>Editar <?= e($pet['nome'] ?? 'pet') ?></h2>
 
-    <div class="titulo">
+        <?php if ($erro !== ''): ?>
+            <div class="mensagem" role="alert"><?= e($erro) ?></div>
+        <?php endif; ?>
 
-        <h1>
-            Editar Pet
-        </h1>
+        <form method="POST" enctype="multipart/form-data">
+            <input
+                type="hidden"
+                name="csrf_token"
+                value="<?= e($_SESSION['csrf_editar_pet']) ?>">
 
-        <p>
-            Atualize as informações de
-            <?= htmlspecialchars(
-                $nome,
-                ENT_QUOTES,
-                'UTF-8'
-            ) ?>.
-        </p>
-
-    </div>
-
-    <?php if ($erro !== ''): ?>
-
-        <div class="erro">
-
-            <?= htmlspecialchars(
-                $erro,
-                ENT_QUOTES,
-                'UTF-8'
-            ) ?>
-
-        </div>
-
-    <?php endif; ?>
-
-    <div class="card">
-
-        <form
-            method="POST"
-            enctype="multipart/form-data"
-        >
-
-            <!-- FOTO -->
-
-            <div class="foto-atual">
-
-                <?php if ($fotoAtual !== ''): ?>
-
-                    <img
-                        src="../<?= htmlspecialchars(
-                            $fotoAtual,
-                            ENT_QUOTES,
-                            'UTF-8'
-                        ) ?>"
-                        alt="Foto do pet"
-                    >
-
-                <?php else: ?>
-
-                    <div class="sem-foto">
-                        Sem foto
-                    </div>
-
-                <?php endif; ?>
-
-            </div>
-
-            <div class="campo">
-
-                <label for="foto">
-                    Alterar foto
-                </label>
-
-                <input
-                    type="file"
-                    id="foto"
-                    name="foto"
-                    accept=".jpg,.jpeg,.png,.webp"
-                >
-
-                <div class="observacao">
-                    JPG, JPEG, PNG ou WEBP. Máximo de 5 MB.
-                </div>
-
-            </div>
-
-            <!-- DADOS PRINCIPAIS -->
-
-            <div class="linha">
+            <div class="grade">
+                <h3 class="subtitulo">Identificação do pet</h3>
 
                 <div class="campo">
-
-                    <label for="nome">
-                        Nome do pet *
-                    </label>
-
+                    <label for="nome">Nome *</label>
                     <input
-                        type="text"
                         id="nome"
                         name="nome"
+                        maxlength="100"
                         required
-                        value="<?= htmlspecialchars(
-                            $nome,
-                            ENT_QUOTES,
-                            'UTF-8'
-                        ) ?>"
-                    >
-
+                        value="<?= e($pet['nome'] ?? '') ?>">
                 </div>
 
                 <div class="campo">
-
-                    <label for="tipo">
-                        Tipo do pet *
-                    </label>
-
-                    <select
-                        id="tipo"
-                        name="tipo"
-                        required
-                    >
-
-                        <option value="">
-                            Selecione
-                        </option>
-
-                        <option
-                            value="Cão"
-                            <?= $tipo === 'Cão'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Cão
-                        </option>
-
-                        <option
-                            value="Gato"
-                            <?= $tipo === 'Gato'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Gato
-                        </option>
-
-                        <option
-                            value="Hamster"
-                            <?= $tipo === 'Hamster'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Hamster
-                        </option>
-
-                        <option
-                            value="Porquinho-da-índia"
-                            <?= $tipo === 'Porquinho-da-índia'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Porquinho-da-índia
-                        </option>
-
-                        <option
-                            value="Coelho"
-                            <?= $tipo === 'Coelho'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Coelho
-                        </option>
-
-                        <option
-                            value="Cavalo"
-                            <?= $tipo === 'Cavalo'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Cavalo
-                        </option>
-
-                        <option
-                            value="Jumento"
-                            <?= $tipo === 'Jumento'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Jumento
-                        </option>
-
-                        <option
-                            value="Bovino"
-                            <?= $tipo === 'Bovino'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Bovino
-                        </option>
-
-                        <option
-                            value="Suíno"
-                            <?= $tipo === 'Suíno'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Suíno
-                        </option>
-
-                        <option
-                            value="Ovelha"
-                            <?= $tipo === 'Ovelha'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Ovelha
-                        </option>
-
-                        <option
-                            value="Cabra"
-                            <?= $tipo === 'Cabra'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Cabra
-                        </option>
-
-                        <option
-                            value="Galinha"
-                            <?= $tipo === 'Galinha'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Galinha
-                        </option>
-
-                        <option
-                            value="Pato"
-                            <?= $tipo === 'Pato'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Pato
-                        </option>
-
-                        <option
-                            value="Outro"
-                            <?= $tipo === 'Outro'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Outro
-                        </option>
-
+                    <label for="tipo">Categoria *</label>
+                    <select id="tipo" name="tipo" required>
+                        <?php foreach ($tiposPermitidos as $opcao): ?>
+                            <option value="<?= e($opcao) ?>"
+                                <?= ($pet['tipo'] ?? '') === $opcao ? 'selected' : '' ?>>
+                                <?= e($opcao) ?>
+                            </option>
+                        <?php endforeach; ?>
                     </select>
-
-                </div>
-
-            </div>
-
-            <div class="linha">
-
-                <div class="campo">
-
-                    <label for="especie">
-                        Espécie
-                    </label>
-
-                    <input
-                        type="text"
-                        id="especie"
-                        name="especie"
-                        value="<?= htmlspecialchars(
-                            $especie,
-                            ENT_QUOTES,
-                            'UTF-8'
-                        ) ?>"
-                        placeholder="Ex.: Canino"
-                    >
-
                 </div>
 
                 <div class="campo">
+                    <label for="especie">Espécie *</label>
+                    <select id="especie" name="especie" required>
+                        <?php foreach ($especiesPermitidas as $opcao): ?>
+                            <option value="<?= e($opcao) ?>"
+                                <?= ($pet['especie'] ?? '') === $opcao ? 'selected' : '' ?>>
+                                <?= e($opcao) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
 
-                    <label for="raca">
-                        Raça
-                    </label>
-
+                <div class="campo">
+                    <label for="raca">Raça</label>
                     <input
-                        type="text"
                         id="raca"
                         name="raca"
-                        value="<?= htmlspecialchars(
-                            $raca,
-                            ENT_QUOTES,
-                            'UTF-8'
-                        ) ?>"
-                        placeholder="Ex.: Labrador"
-                    >
-
+                        maxlength="100"
+                        value="<?= e($pet['raca'] ?? '') ?>">
                 </div>
 
-            </div>
-
-            <div class="linha">
-
                 <div class="campo">
-
-                    <label for="sexo">
-                        Sexo
-                    </label>
-
-                    <select
-                        id="sexo"
-                        name="sexo"
-                    >
-
-                        <option value="">
-                            Não informado
-                        </option>
-
-                        <option
-                            value="Macho"
-                            <?= $sexo === 'Macho'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Macho
-                        </option>
-
-                        <option
-                            value="Fêmea"
-                            <?= $sexo === 'Fêmea'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Fêmea
-                        </option>
-
+                    <label for="sexo">Sexo *</label>
+                    <select id="sexo" name="sexo" required>
+                        <?php foreach ($sexosPermitidos as $opcao): ?>
+                            <option value="<?= e($opcao) ?>"
+                                <?= ($pet['sexo'] ?? '') === $opcao ? 'selected' : '' ?>>
+                                <?= e($opcao) ?>
+                            </option>
+                        <?php endforeach; ?>
                     </select>
-
                 </div>
 
                 <div class="campo">
-
-                    <label for="data_nascimento">
-                        Data de nascimento
-                    </label>
-
+                    <label for="data_nascimento">Data de nascimento</label>
                     <input
                         type="text"
                         id="data_nascimento"
                         name="data_nascimento"
-                        placeholder="DD/MM/AAAA"
+                        inputmode="numeric"
                         maxlength="10"
-                        value="<?= htmlspecialchars(
-                            $dataNascimento,
-                            ENT_QUOTES,
-                            'UTF-8'
-                        ) ?>"
-                    >
-
-                    <div class="observacao">
-                        Digite a data manualmente.
-                    </div>
-
+                        placeholder="DD/MM/AAAA"
+                        value="<?= e(dataParaTela($pet['data_nascimento'] ?? null)) ?>">
                 </div>
 
-            </div>
-
-            <div class="linha">
-
                 <div class="campo">
-
-                    <label for="cor">
-                        Cor
-                    </label>
-
+                    <label for="cor">Cor ou pelagem</label>
                     <input
-                        type="text"
                         id="cor"
                         name="cor"
-                        value="<?= htmlspecialchars(
-                            $cor,
-                            ENT_QUOTES,
-                            'UTF-8'
-                        ) ?>"
-                    >
-
+                        maxlength="100"
+                        value="<?= e($pet['cor'] ?? '') ?>">
                 </div>
 
                 <div class="campo">
+                    <label for="porte">Porte</label>
+                    <select id="porte" name="porte">
+                        <?php foreach ($portesPermitidos as $opcao): ?>
+                            <option value="<?= e($opcao) ?>"
+                                <?= ($pet['porte'] ?? 'Não informado') === $opcao ? 'selected' : '' ?>>
+                                <?= e($opcao) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
 
-                    <label for="peso">
-                        Peso (kg)
-                    </label>
-
+                <div class="campo">
+                    <label for="peso">Peso em kg</label>
                     <input
                         type="number"
-                        step="0.01"
-                        min="0"
                         id="peso"
                         name="peso"
-                        value="<?= htmlspecialchars(
-                            $peso,
-                            ENT_QUOTES,
-                            'UTF-8'
-                        ) ?>"
-                    >
-
-                </div>
-
-            </div>
-
-            <div class="campo">
-
-                <label for="microchip">
-                    Microchip
-                </label>
-
-                <input
-                    type="text"
-                    id="microchip"
-                    name="microchip"
-                    value="<?= htmlspecialchars(
-                        $microchip,
-                        ENT_QUOTES,
-                        'UTF-8'
-                    ) ?>"
-                    placeholder="Número do microchip, se houver"
-                >
-
-            </div>
-
-            <!-- SAÚDE -->
-
-            <div class="linha">
-
-                <div class="campo">
-
-                    <label for="vacinado">
-                        Vacinado
-                    </label>
-
-                    <select
-                        id="vacinado"
-                        name="vacinado"
-                    >
-
-                        <option value="">
-                            Não informado
-                        </option>
-
-                        <option
-                            value="Sim"
-                            <?= $vacinado === 'Sim'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Sim
-                        </option>
-
-                        <option
-                            value="Não"
-                            <?= $vacinado === 'Não'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Não
-                        </option>
-
-                        <option
-                            value="Parcialmente"
-                            <?= $vacinado === 'Parcialmente'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Parcialmente
-                        </option>
-
-                    </select>
-
+                        min="0.01"
+                        max="2000"
+                        step="0.01"
+                        value="<?= e($pet['peso'] ?? '') ?>">
                 </div>
 
                 <div class="campo">
-
-                    <label for="castrado">
-                        Castrado
-                    </label>
-
-                    <select
-                        id="castrado"
-                        name="castrado"
-                    >
-
-                        <option value="">
-                            Não informado
-                        </option>
-
-                        <option
-                            value="Sim"
-                            <?= $castrado === 'Sim'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Sim
-                        </option>
-
-                        <option
-                            value="Não"
-                            <?= $castrado === 'Não'
-                                ? 'selected'
-                                : '' ?>
-                        >
-                            Não
-                        </option>
-
-                    </select>
-
+                    <label for="microchip">Número do microchip</label>
+                    <input
+                        id="microchip"
+                        name="microchip"
+                        maxlength="100"
+                        value="<?= e($pet['microchip'] ?? '') ?>">
                 </div>
 
+                <div class="campo completo">
+                    <label>Foto atual</label>
+
+                    <?php if (!empty($pet['foto'])): ?>
+                        <img
+                            class="foto-atual"
+                            src="<?= e($pet['foto']) ?>"
+                            alt="Foto atual de <?= e($pet['nome'] ?? 'pet') ?>">
+                    <?php else: ?>
+                        <p class="nota">Nenhuma foto cadastrada.</p>
+                    <?php endif; ?>
+
+                    <label for="foto">Selecionar uma nova foto (opcional)</label>
+                    <input
+                        type="file"
+                        id="foto"
+                        name="foto"
+                        accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp">
+
+                    <p class="nota">
+                        Se não escolher outra imagem, a foto atual será mantida.
+                        JPG, PNG ou WEBP; até 4 MB.
+                    </p>
+                </div>
+
+                <h3 class="subtitulo">Informações de saúde</h3>
+
+                <div class="checkboxes">
+                    <label class="checkbox">
+                        <input
+                            type="checkbox"
+                            name="vacinado"
+                            value="1"
+                            <?= !empty($pet['vacinado']) ? 'checked' : '' ?>>
+                        Já foi vacinado
+                    </label>
+
+                    <label class="checkbox">
+                        <input
+                            type="checkbox"
+                            name="castrado"
+                            value="1"
+                            <?= !empty($pet['castrado']) ? 'checked' : '' ?>>
+                        É castrado
+                    </label>
+                </div>
+
+                <div class="campo completo">
+                    <label for="alergias">Alergias</label>
+                    <textarea id="alergias" name="alergias" maxlength="5000"><?= e($pet['alergias'] ?? '') ?></textarea>
+                </div>
+
+                <div class="campo completo">
+                    <label for="doencas">Doenças ou condições de saúde</label>
+                    <textarea id="doencas" name="doencas" maxlength="5000"><?= e($pet['doencas'] ?? '') ?></textarea>
+                </div>
+
+                <div class="campo completo">
+                    <label for="medicamentos">Medicamentos em uso</label>
+                    <textarea id="medicamentos" name="medicamentos" maxlength="5000"><?= e($pet['medicamentos'] ?? '') ?></textarea>
+                </div>
+
+                <div class="campo completo">
+                    <label for="observacoes">Observações</label>
+                    <textarea id="observacoes" name="observacoes" maxlength="5000"><?= e($pet['observacoes'] ?? '') ?></textarea>
+                </div>
             </div>
 
-            <div class="campo">
-
-                <label for="alergias">
-                    Alergias
-                </label>
-
-                <textarea
-                    id="alergias"
-                    name="alergias"
-                    placeholder="Informe alergias conhecidas..."
-                ><?= htmlspecialchars(
-                    $alergias,
-                    ENT_QUOTES,
-                    'UTF-8'
-                ) ?></textarea>
-
-            </div>
-
-            <div class="campo">
-
-                <label for="doencas">
-                    Doenças
-                </label>
-
-                <textarea
-                    id="doencas"
-                    name="doencas"
-                    placeholder="Informe doenças ou condições de saúde..."
-                ><?= htmlspecialchars(
-                    $doencas,
-                    ENT_QUOTES,
-                    'UTF-8'
-                ) ?></textarea>
-
-            </div>
-
-            <div class="campo">
-
-                <label for="medicamentos">
-                    Medicamentos
-                </label>
-
-                <textarea
-                    id="medicamentos"
-                    name="medicamentos"
-                    placeholder="Informe medicamentos utilizados..."
-                ><?= htmlspecialchars(
-                    $medicamentos,
-                    ENT_QUOTES,
-                    'UTF-8'
-                ) ?></textarea>
-
-            </div>
-
-            <div class="campo">
-
-                <label for="observacoes">
-                    Observações
-                </label>
-
-                <textarea
-                    id="observacoes"
-                    name="observacoes"
-                    placeholder="Outras informações importantes..."
-                ><?= htmlspecialchars(
-                    $observacoes,
-                    ENT_QUOTES,
-                    'UTF-8'
-                ) ?></textarea>
-
-            </div>
-
-            <!-- BOTÕES -->
-
-            <div class="botoes">
-
-                <button
-                    type="submit"
-                    class="botao"
-                >
+            <div class="acoes">
+                <button class="botao primario" type="submit">
                     Salvar alterações
                 </button>
 
-                <a
-                    href="pet.php?id=<?= $petId ?>"
-                    class="botao botao-azul"
-                >
-                    Ver perfil do pet
+                <a class="botao secundario" href="pets.php">
+                    Cancelar
                 </a>
-
-                <a
-                    href="pets.php"
-                    class="botao botao-cinza"
-                >
-                    Voltar para Meus Pets
-                </a>
-
             </div>
-
         </form>
-
     </div>
-
 </main>
 
 <script>
-
-/*
-|--------------------------------------------------------------------------
-| MÁSCARA DE DATA DD/MM/AAAA
-|--------------------------------------------------------------------------
-*/
-
-const campoData =
-    document.getElementById('data_nascimento');
-
-if (campoData) {
+    const campoData = document.getElementById('data_nascimento');
 
     campoData.addEventListener('input', function () {
+        let numeros = campoData.value.replace(/\D/g, '').slice(0, 8);
 
-        let valor =
-            this.value.replace(/\D/g, '');
-
-        if (valor.length > 8) {
-            valor = valor.substring(0, 8);
+        if (numeros.length > 4) {
+            numeros = numeros.slice(0, 2) + '/' +
+                numeros.slice(2, 4) + '/' + numeros.slice(4);
+        } else if (numeros.length > 2) {
+            numeros = numeros.slice(0, 2) + '/' + numeros.slice(2);
         }
 
-        if (valor.length >= 5) {
-
-            valor =
-                valor.substring(0, 2) +
-                '/' +
-                valor.substring(2, 4) +
-                '/' +
-                valor.substring(4);
-
-        } else if (valor.length >= 3) {
-
-            valor =
-                valor.substring(0, 2) +
-                '/' +
-                valor.substring(2);
-        }
-
-        this.value = valor;
-
+        campoData.value = numeros;
     });
-
-}
-
 </script>
-
 </body>
-
 </html>

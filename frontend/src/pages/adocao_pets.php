@@ -1,889 +1,967 @@
+
 <?php
+declare(strict_types=1);
 
-session_start();
-
-if (!isset($_SESSION['usuario'])) {
-    header('Location: login.php');
-    exit;
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
 }
 
-$usuario = $_SESSION['usuario'];
+require_once __DIR__ . '/../../../backend/config/database.php';
+require_once __DIR__ . '/../../../backend/services/AdotecaClient.php';
 
-$nomeUsuario = 'Usuário';
+$pdo = null;
+$erroLocal = '';
+$erroAdoteca = '';
 
-if (is_array($usuario)) {
-    $nomeUsuario =
-        $usuario['nome_completo']
-        ?? $usuario['nomeCompleto']
-        ?? $usuario['nome']
-        ?? 'Usuário';
+$animaisLocais = [];
+$animaisAdoteca = [];
+$totalAdoteca = 0;
+
+function h($valor): string
+{
+    return htmlspecialchars(
+        (string)($valor ?? ''),
+        ENT_QUOTES,
+        'UTF-8'
+    );
 }
 
-$tipoFiltro = $_GET['tipo'] ?? 'todos';
+function valorOuPadrao($valor, string $padrao = 'Não informado'): string
+{
+    if ($valor === null || trim((string)$valor) === '') {
+        return $padrao;
+    }
 
-$tiposPermitidos = [
-    'todos',
-    'cao',
+    return (string)$valor;
+}
+
+/**
+ * Aceita somente links HTTP/HTTPS.
+ */
+function urlSegura($url): string
+{
+    if (!is_string($url) || trim($url) === '') {
+        return '';
+    }
+
+    $partes = parse_url($url);
+
+    if (
+        !is_array($partes) ||
+        !isset($partes['scheme'], $partes['host']) ||
+        !in_array(strtolower($partes['scheme']), ['http', 'https'], true)
+    ) {
+        return '';
+    }
+
+    return $url;
+}
+
+/**
+ * Converte respostas do MCP para a estrutura:
+ * ['total' => ..., 'pets' => [...]]
+ */
+function extrairResultadoAdoteca($resposta): array
+{
+    if (!is_array($resposta)) {
+        throw new RuntimeException(
+            'A resposta da Adoteca não está no formato esperado.'
+        );
+    }
+
+    if (!empty($resposta['isError'])) {
+        throw new RuntimeException(
+            'A API da Adoteca retornou um erro.'
+        );
+    }
+
+    $candidatos = [];
+
+    if (isset($resposta['structuredContent']['result'])) {
+        $candidatos[] = $resposta['structuredContent']['result'];
+    }
+
+    if (isset($resposta['result'])) {
+        $candidatos[] = $resposta['result'];
+    }
+
+    if (isset($resposta['structuredContent'])) {
+        $candidatos[] = $resposta['structuredContent'];
+    }
+
+    if (isset($resposta['content']) && is_array($resposta['content'])) {
+        foreach ($resposta['content'] as $item) {
+            if (!empty($item['text']) && is_string($item['text'])) {
+                $decodificado = json_decode(
+                    $item['text'],
+                    true
+                );
+
+                if (is_array($decodificado)) {
+                    $candidatos[] = $decodificado;
+                }
+            }
+        }
+    }
+
+    foreach ($candidatos as $candidato) {
+        if (isset($candidato['result']) && is_array($candidato['result'])) {
+            $candidato = $candidato['result'];
+        }
+
+        if (isset($candidato['pets']) && is_array($candidato['pets'])) {
+            return [
+                'total' => (int)($candidato['total'] ?? count($candidato['pets'])),
+                'page' => (int)($candidato['page'] ?? 1),
+                'pets' => $candidato['pets']
+            ];
+        }
+    }
+
+    throw new RuntimeException(
+        'Não foi possível encontrar a lista de animais na resposta da API.'
+    );
+}
+
+function simNaoDesconhecido($valor): string
+{
+    if ($valor === true || $valor === 1 || $valor === '1') {
+        return 'Sim';
+    }
+
+    if ($valor === false || $valor === 0 || $valor === '0') {
+        return 'Não';
+    }
+
+    return 'Não informado';
+}
+
+// Filtros
+$especie = strtolower(trim((string)($_GET['especie'] ?? '')));
+$busca = trim((string)($_GET['busca'] ?? ''));
+$paginaAdoteca = filter_input(
+    INPUT_GET,
+    'pagina_adoteca',
+    FILTER_VALIDATE_INT
+);
+
+$paginaAdoteca = max(1, $paginaAdoteca ?: 1);
+$limiteAdoteca = 10;
+
+$especiesPermitidas = [
+    '',
+    'cachorro',
     'gato'
 ];
 
-if (!in_array($tipoFiltro, $tiposPermitidos, true)) {
-    $tipoFiltro = 'todos';
+if (!in_array($especie, $especiesPermitidas, true)) {
+    $especie = '';
+}
+
+try {
+    $pdo = Database::getConnection();
+
+    /*
+     * Anúncios cadastrados pelos usuários do Saúde-Conecta.
+     * Este código considera a tabela pets_adocao criada anteriormente.
+     */
+    $sql = "
+        SELECT
+            id,
+            nome,
+            especie,
+            raca,
+            sexo,
+            idade,
+            porte,
+            cidade,
+            uf,
+            descricao,
+            vacinado,
+            castrado,
+            contato,
+            foto,
+            status
+        FROM pets_adocao
+        WHERE status = 'disponivel'
+    ";
+
+    $parametros = [];
+
+    if ($especie !== '') {
+        $sql .= ' AND LOWER(especie) = :especie';
+        $parametros[':especie'] = $especie;
+    }
+
+    if ($busca !== '') {
+        $sql .= ' AND (nome LIKE :busca OR cidade LIKE :busca OR raca LIKE :busca)';
+        $parametros[':busca'] = '%' . $busca . '%';
+    }
+
+    $sql .= ' ORDER BY criado_em DESC';
+
+    $consulta = $pdo->prepare($sql);
+    $consulta->execute($parametros);
+    $animaisLocais = $consulta->fetchAll(PDO::FETCH_ASSOC);
+
+} catch (Throwable $e) {
+    $erroLocal = 'Não foi possível carregar os anúncios locais. '
+        . 'Confira a tabela pets_adocao e suas colunas.';
+
+    error_log('[Saude-Conecta] Erro nos anúncios locais: ' . $e->getMessage());
+}
+
+/*
+ * Busca animais na API da Adoteca.
+ *
+ * A implementação já testada aceita cidade, estado,
+ * espécie e quantidade. A página solicitada é enviada
+ * somente se a classe oferecer esse parâmetro.
+ */
+try {
+    $cliente = new AdotecaClient();
+
+    $metodo = new ReflectionMethod($cliente, 'buscarPets');
+
+    if ($metodo->getNumberOfParameters() >= 5) {
+        $resposta = $cliente->buscarPets(
+            'Patos',
+            'PB',
+            $especie,
+            $limiteAdoteca,
+            $paginaAdoteca
+        );
+    } else {
+        $resposta = $cliente->buscarPets(
+            'Patos',
+            'PB',
+            $especie,
+            $limiteAdoteca
+        );
+    }
+
+    $resultado = extrairResultadoAdoteca($resposta);
+
+    $totalAdoteca = $resultado['total'];
+    $animaisAdoteca = $resultado['pets'];
+
+    // Filtro textual complementar, aplicado aos resultados recebidos.
+    if ($busca !== '') {
+        $termo = function_exists('mb_strtolower')
+            ? mb_strtolower($busca, 'UTF-8')
+            : strtolower($busca);
+
+        $animaisAdoteca = array_values(array_filter(
+            $animaisAdoteca,
+            function ($animal) use ($termo) {
+                $texto = implode(' ', [
+                    $animal['name'] ?? '',
+                    $animal['species'] ?? '',
+                    $animal['breed'] ?? '',
+                    $animal['city'] ?? ''
+                ]);
+
+                $texto = function_exists('mb_strtolower')
+                    ? mb_strtolower($texto, 'UTF-8')
+                    : strtolower($texto);
+
+                return strpos($texto, $termo) !== false;
+            }
+        ));
+    }
+
+} catch (Throwable $e) {
+    $erroAdoteca = 'Não foi possível carregar os animais da Adoteca neste momento. '
+        . 'Os anúncios locais continuam disponíveis.';
+
+    error_log('[Saude-Conecta / Adoteca] ' . $e->getMessage());
+}
+
+$paginasAdoteca = max(
+    1,
+    (int)ceil($totalAdoteca / $limiteAdoteca)
+);
+
+$nomeUsuario = 'Visitante';
+
+if (isset($_SESSION['usuario'])) {
+    if (is_array($_SESSION['usuario'])) {
+        $nomeUsuario = $_SESSION['usuario']['nomeCompleto']
+            ?? $_SESSION['usuario']['nome']
+            ?? $_SESSION['usuario']['nome_completo']
+            ?? 'Usuário';
+    } elseif (is_string($_SESSION['usuario'])) {
+        $nomeUsuario = $_SESSION['usuario'];
+    }
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="pt-BR">
-
 <head>
-
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
-    <title>Adoção de Pets - Saúde-Conecta</title>
+    <title>Adoção de Animais | Saúde-Conecta</title>
 
     <style>
+        :root {
+            --verde: #16794b;
+            --verde-escuro: #105c39;
+            --fundo: #f4f8f5;
+            --texto: #23332a;
+            --borda: #dce8df;
+            --branco: #fff;
+        }
 
         * {
             box-sizing: border-box;
-            margin: 0;
-            padding: 0;
         }
 
         body {
+            margin: 0;
+            background: var(--fundo);
+            color: var(--texto);
             font-family: Arial, Helvetica, sans-serif;
-            background: #f4f8fb;
-            color: #1f2937;
         }
 
         header {
-            background: linear-gradient(
-                135deg,
-                #0f766e,
-                #0e7490
-            );
-
+            background: var(--verde);
             color: white;
-            padding: 25px 20px;
+            padding: 20px;
         }
 
-        .header-container {
-            max-width: 1200px;
+        .cabecalho,
+        main {
+            width: min(1180px, 94%);
             margin: auto;
+        }
 
+        .cabecalho {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            gap: 20px;
             flex-wrap: wrap;
+            gap: 12px;
         }
 
-        .titulo {
-            font-size: 30px;
-            font-weight: bold;
+        header h1 {
+            margin: 0;
+            font-size: 1.5rem;
         }
 
-        .subtitulo {
-            margin-top: 7px;
-            opacity: 0.92;
-        }
-
-        .menu {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-
-        .menu a {
+        header a {
             color: white;
-            text-decoration: none;
-            background: rgba(255,255,255,0.15);
-            padding: 10px 15px;
-            border-radius: 10px;
             font-weight: bold;
-        }
-
-        .menu a:hover {
-            background: rgba(255,255,255,0.25);
+            text-decoration: none;
         }
 
         main {
-            max-width: 1200px;
-            margin: 30px auto;
-            padding: 0 20px;
+            padding: 28px 0 50px;
         }
 
         .introducao {
-            background: white;
-            border-radius: 18px;
-            padding: 25px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.07);
-            margin-bottom: 25px;
+            margin-bottom: 24px;
         }
 
         .introducao h2 {
-            color: #0f766e;
-            margin-bottom: 12px;
+            margin-bottom: 8px;
+            font-size: 1.9rem;
         }
 
         .introducao p {
             line-height: 1.6;
-            margin-bottom: 10px;
+            color: #53675a;
         }
 
         .filtros {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-top: 20px;
-        }
-
-        .filtro {
-            text-decoration: none;
-            padding: 11px 18px;
-            border-radius: 10px;
-            background: #e5e7eb;
-            color: #374151;
-            font-weight: bold;
-        }
-
-        .filtro.ativo {
-            background: #0f766e;
-            color: white;
-        }
-
-        .secao {
-            margin-top: 30px;
-        }
-
-        .secao h2 {
-            margin-bottom: 18px;
-            color: #111827;
-        }
-
-        .cards {
             display: grid;
-            grid-template-columns:
-                repeat(auto-fit, minmax(280px, 1fr));
-
-            gap: 20px;
-        }
-
-        .card {
+            grid-template-columns: minmax(180px, 1fr) 190px auto;
+            gap: 12px;
             background: white;
-            border-radius: 18px;
-            overflow: hidden;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-            display: flex;
-            flex-direction: column;
+            border: 1px solid var(--borda);
+            border-radius: 14px;
+            padding: 16px;
+            margin-bottom: 30px;
         }
 
-        .card-topo {
-            padding: 25px;
-            background: #ecfeff;
+        input,
+        select,
+        button {
+            font: inherit;
+            min-height: 44px;
+            border-radius: 8px;
         }
 
-        .animal-icon {
-            font-size: 45px;
-            margin-bottom: 10px;
+        input,
+        select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #cbd9ce;
+            background: white;
         }
 
-        .card h3 {
-            color: #0f766e;
-            margin-bottom: 8px;
-            font-size: 21px;
-        }
-
-        .card p {
-            line-height: 1.55;
-            color: #4b5563;
-        }
-
-        .card-conteudo {
-            padding: 20px;
-            flex: 1;
-        }
-
-        .informacao {
-            margin-bottom: 12px;
-        }
-
-        .informacao strong {
-            color: #111827;
-        }
-
+        button,
         .botao {
-            display: inline-block;
-            margin-top: 10px;
-            padding: 12px 18px;
-            border-radius: 10px;
-            background: #0f766e;
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            padding: 10px 15px;
+            border: 0;
+            background: var(--verde);
             color: white;
-            text-decoration: none;
             font-weight: bold;
-            text-align: center;
+            text-decoration: none;
+            cursor: pointer;
+            border-radius: 8px;
         }
 
+        button:hover,
         .botao:hover {
-            background: #115e59;
+            background: var(--verde-escuro);
         }
 
         .botao-secundario {
-            background: #0e7490;
+            background: #e9f4ed;
+            color: var(--verde-escuro);
         }
 
         .botao-secundario:hover {
-            background: #155e75;
+            background: #d7eadc;
+        }
+
+        .secao {
+            margin-top: 32px;
+        }
+
+        .secao-cabecalho {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .secao-cabecalho h2 {
+            margin: 0;
+            font-size: 1.45rem;
+        }
+
+        .contador {
+            color: #53675a;
+            font-size: .95rem;
+        }
+
+        .galeria {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 20px;
+        }
+
+        .cartao {
+            background: white;
+            border: 1px solid var(--borda);
+            border-radius: 14px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            box-shadow: 0 3px 12px rgb(20 60 35 / 5%);
+        }
+
+        .foto {
+            width: 100%;
+            height: 230px;
+            object-fit: cover;
+            background: #eaf0eb;
+        }
+
+        .sem-foto {
+            height: 230px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #eaf0eb;
+            color: #526b5a;
+        }
+
+        .cartao-conteudo {
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            flex: 1;
+        }
+
+        .cartao h3 {
+            margin: 0;
+            font-size: 1.25rem;
+            overflow-wrap: anywhere;
+        }
+
+        .detalhes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 7px;
+        }
+
+        .etiqueta {
+            display: inline-block;
+            padding: 5px 8px;
+            border-radius: 20px;
+            background: #edf5ef;
+            color: #28563b;
+            font-size: .82rem;
+        }
+
+        .informacoes {
+            color: #53675a;
+            font-size: .93rem;
+            line-height: 1.5;
+            overflow-wrap: anywhere;
+        }
+
+        .informacoes p {
+            margin: 3px 0;
+        }
+
+        .acoes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: auto;
+            padding-top: 8px;
+        }
+
+        .acoes a {
+            flex: 1 1 120px;
+            text-align: center;
         }
 
         .aviso {
-            background: #fff7ed;
-            border-left: 5px solid #f97316;
-            padding: 18px;
+            border: 1px solid #eadca8;
+            background: #fff9df;
+            color: #6b5515;
             border-radius: 10px;
-            margin-top: 25px;
-            line-height: 1.6;
+            padding: 12px 14px;
+            margin: 14px 0;
+            line-height: 1.5;
         }
 
-        .adocao-local {
+        .vazio {
+            border: 1px dashed #cbd9ce;
             background: white;
-            border-radius: 18px;
-            padding: 25px;
-            margin-top: 30px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.07);
-        }
-
-        .adocao-local h2 {
-            color: #0f766e;
-            margin-bottom: 15px;
-        }
-
-        .local-item {
-            padding: 18px 0;
-            border-bottom: 1px solid #e5e7eb;
-        }
-
-        .local-item:last-child {
-            border-bottom: none;
-        }
-
-        .local-item h3 {
-            margin-bottom: 8px;
-            color: #111827;
-        }
-
-        .local-item p {
-            line-height: 1.6;
-            color: #4b5563;
-            margin-bottom: 8px;
-        }
-
-        .fonte {
-            margin-top: 25px;
-            padding: 18px;
-            background: #f0fdfa;
             border-radius: 12px;
-            line-height: 1.6;
+            padding: 25px;
+            color: #53675a;
+            text-align: center;
         }
 
-        .fonte a {
-            color: #0f766e;
-            font-weight: bold;
+        .paginacao {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin: 24px 0;
         }
 
         footer {
-            margin-top: 50px;
-            padding: 25px;
-            background: #111827;
-            color: #d1d5db;
             text-align: center;
-            line-height: 1.6;
+            padding: 22px;
+            color: #637568;
+            font-size: .9rem;
         }
 
-        @media (max-width: 700px) {
-
-            .titulo {
-                font-size: 24px;
+        @media (max-width: 850px) {
+            .galeria {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
             }
 
-            .header-container {
-                align-items: flex-start;
+            .filtros {
+                grid-template-columns: 1fr 1fr;
             }
 
-            .menu {
-                width: 100%;
+            .filtros button {
+                grid-column: 1 / -1;
             }
-
-            .menu a {
-                flex: 1;
-                text-align: center;
-            }
-
         }
 
+        @media (max-width: 560px) {
+            .galeria,
+            .filtros {
+                grid-template-columns: 1fr;
+            }
+
+            .introducao h2 {
+                font-size: 1.5rem;
+            }
+
+            .foto,
+            .sem-foto {
+                height: 250px;
+            }
+        }
     </style>
-
 </head>
 
 <body>
-
 <header>
+    <div class="cabecalho">
+        <h1>Saúde-Conecta | Adoção de Animais</h1>
 
-    <div class="header-container">
-
-        <div>
-
-            <div class="titulo">
-                Adoção de Pets
-            </div>
-
-            <div class="subtitulo">
-                Encontre um animal para adotar em Patos/PB
-            </div>
-
-        </div>
-
-        <nav class="menu">
-
-            <a href="../components/perfil_saude.php">
-                Perfil de Saúde
-            </a>
-
-            <a href="pets.php">
-                Meus Pets
-            </a>
-
-            <a href="cadastro_pet.php">
-                Cadastrar Pet
-            </a>
-
-            <a href="../components/logout.php">
-                Sair
-            </a>
-
+        <nav aria-label="Navegação principal">
+            <a href="perfil_saude.php">Meu perfil</a>
+            &nbsp; | &nbsp;
+            <a href="pets.php">Meus pets</a>
+            &nbsp; | &nbsp;
+            <a href="cadastrar_pet_adocao.php">Cadastrar anúncio</a>
         </nav>
-
     </div>
-
 </header>
 
-
 <main>
-
     <section class="introducao">
-
-        <h2>
-            Encontre seu novo amigo
-        </h2>
+        <h2>Encontre um amigo para a vida toda 🐾</h2>
 
         <p>
-            O Saúde-Conecta também pode ajudar você a encontrar
-            informações sobre animais disponíveis para adoção.
+            Veja animais anunciados pela comunidade do Saúde-Conecta
+            e pela Adoteca. Consulte o anúncio original para confirmar
+            a disponibilidade e combinar a adoção com o responsável.
         </p>
 
-        <p>
-            A adoção deve ser responsável. Antes de adotar,
-            verifique se você possui espaço, tempo e condições
-            financeiras para cuidar do animal durante toda a vida.
-        </p>
+        <p>Olá, <?= h($nomeUsuario) ?>!</p>
 
-        <div class="filtros">
+        <a class="botao" href="cadastrar_pet_adocao.php">
+            + Anunciar animal para adoção
+        </a>
+    </section>
 
-            <a
-                href="adocao_pets.php?tipo=todos"
-                class="filtro <?= $tipoFiltro === 'todos' ? 'ativo' : '' ?>"
-            >
-                Todos
-            </a>
+    <form class="filtros" method="get">
+        <input
+            type="search"
+            name="busca"
+            placeholder="Buscar por nome, raça ou cidade"
+            value="<?= h($busca) ?>"
+        >
 
-            <a
-                href="adocao_pets.php?tipo=cao"
-                class="filtro <?= $tipoFiltro === 'cao' ? 'ativo' : '' ?>"
-            >
-                Cães
-            </a>
-
-            <a
-                href="adocao_pets.php?tipo=gato"
-                class="filtro <?= $tipoFiltro === 'gato' ? 'ativo' : '' ?>"
-            >
+        <select name="especie" aria-label="Filtrar por espécie">
+            <option value="" <?= $especie === '' ? 'selected' : '' ?>>
+                Todas as espécies
+            </option>
+            <option value="cachorro" <?= $especie === 'cachorro' ? 'selected' : '' ?>>
+                Cachorros
+            </option>
+            <option value="gato" <?= $especie === 'gato' ? 'selected' : '' ?>>
                 Gatos
-            </a>
+            </option>
+        </select>
 
-        </div>
+        <button type="submit">Buscar animais</button>
+    </form>
 
-    </section>
-
-
-    <?php if ($tipoFiltro === 'todos' || $tipoFiltro === 'cao'): ?>
-
-    <section class="secao">
-
-        <h2>
-            🐶 Cães para adoção
-        </h2>
-
-        <div class="cards">
-
-            <div class="card">
-
-                <div class="card-topo">
-
-                    <div class="animal-icon">
-                        🐶
-                    </div>
-
-                    <h3>
-                        Rajado
-                    </h3>
-
-                    <p>
-                        Filhote macho disponível para adoção
-                        em Patos/PB.
-                    </p>
-
-                </div>
-
-                <div class="card-conteudo">
-
-                    <div class="informacao">
-                        <strong>Espécie:</strong>
-                        Cão
-                    </div>
-
-                    <div class="informacao">
-                        <strong>Sexo:</strong>
-                        Macho
-                    </div>
-
-                    <div class="informacao">
-                        <strong>Idade:</strong>
-                        Aproximadamente 3 meses
-                    </div>
-
-                    <div class="informacao">
-                        <strong>Perfil:</strong>
-                        Dócil e indicado para convivência
-                        com crianças e gatos, segundo o anúncio.
-                    </div>
-
-                    <a
-                        href="https://adotar.com.br/adocao-de-animais/cao/patos-pb"
-                        target="_blank"
-                        class="botao"
-                    >
-                        Quero adotar
-                    </a>
-
-                </div>
-
-            </div>
-
-
-            <div class="card">
-
-                <div class="card-topo">
-
-                    <div class="animal-icon">
-                        🐶
-                    </div>
-
-                    <h3>
-                        Outros cães
-                    </h3>
-
-                    <p>
-                        Veja outros cães disponíveis
-                        para adoção em Patos.
-                    </p>
-
-                </div>
-
-                <div class="card-conteudo">
-
-                    <div class="informacao">
-                        <strong>Local:</strong>
-                        Patos/PB
-                    </div>
-
-                    <div class="informacao">
-                        <strong>Plataforma:</strong>
-                        Adotar.com.br
-                    </div>
-
-                    <a
-                        href="https://adotar.com.br/adocao-de-animais/cao/patos-pb"
-                        target="_blank"
-                        class="botao"
-                    >
-                        Ver cães disponíveis
-                    </a>
-
-                </div>
-
-            </div>
-
-        </div>
-
-    </section>
-
+    <?php if ($erroLocal !== ''): ?>
+        <div class="aviso"><?= h($erroLocal) ?></div>
     <?php endif; ?>
 
-
-    <?php if ($tipoFiltro === 'todos' || $tipoFiltro === 'gato'): ?>
-
-    <section class="secao">
-
-        <h2>
-            🐱 Gatos para adoção
-        </h2>
-
-        <div class="cards">
-
-            <div class="card">
-
-                <div class="card-topo">
-
-                    <div class="animal-icon">
-                        🐱
-                    </div>
-
-                    <h3>
-                        Mimo
-                    </h3>
-
-                    <p>
-                        Gato disponível para adoção
-                        em Patos/PB.
-                    </p>
-
-                </div>
-
-                <div class="card-conteudo">
-
-                    <div class="informacao">
-                        <strong>Espécie:</strong>
-                        Gato
-                    </div>
-
-                    <div class="informacao">
-                        <strong>Sexo:</strong>
-                        Macho
-                    </div>
-
-                    <div class="informacao">
-                        <strong>Idade:</strong>
-                        Entre 2 e 6 meses
-                    </div>
-
-                    <div class="informacao">
-                        <strong>Informações:</strong>
-                        O anúncio informa que está vacinado
-                        e alimentando-se de ração.
-                    </div>
-
-                    <a
-                        href="https://adotar.com.br/adocao-de-animais/gato/patos-pb"
-                        target="_blank"
-                        class="botao"
-                    >
-                        Quero adotar
-                    </a>
-
-                </div>
-
-            </div>
-
-
-            <div class="card">
-
-                <div class="card-topo">
-
-                    <div class="animal-icon">
-                        🐱
-                    </div>
-
-                    <h3>
-                        Laila
-                    </h3>
-
-                    <p>
-                        Gata disponível para adoção
-                        em Patos/PB.
-                    </p>
-
-                </div>
-
-                <div class="card-conteudo">
-
-                    <div class="informacao">
-                        <strong>Espécie:</strong>
-                        Gato
-                    </div>
-
-                    <div class="informacao">
-                        <strong>Idade:</strong>
-                        Entre 2 e 6 meses
-                    </div>
-
-                    <div class="informacao">
-                        <strong>Perfil:</strong>
-                        Dócil e já vacinada,
-                        segundo o anúncio.
-                    </div>
-
-                    <a
-                        href="https://adotar.com.br/adocao-de-animais/gato/patos-pb"
-                        target="_blank"
-                        class="botao"
-                    >
-                        Quero adotar
-                    </a>
-
-                </div>
-
-            </div>
-
-
-            <div class="card">
-
-                <div class="card-topo">
-
-                    <div class="animal-icon">
-                        🐱
-                    </div>
-
-                    <h3>
-                        Adote Cat
-                    </h3>
-
-                    <p>
-                        Protetor de animais que atua
-                        em Patos/PB.
-                    </p>
-
-                </div>
-
-                <div class="card-conteudo">
-
-                    <div class="informacao">
-                        <strong>Local:</strong>
-                        Patos/PB
-                    </div>
-
-                    <div class="informacao">
-                        <strong>Animais:</strong>
-                        Cães e gatos
-                    </div>
-
-                    <div class="informacao">
-                        <strong>Disponíveis:</strong>
-                        A página consultada informa
-                        animais disponíveis para adoção.
-                    </div>
-
-                    <a
-                        href="https://www.adoteca.com.br/protetor/adote-cat-patos-pb-w2aajv"
-                        target="_blank"
-                        class="botao"
-                    >
-                        Ver animais
-                    </a>
-
-                </div>
-
-            </div>
-
+    <?php if ($erroAdoteca !== ''): ?>
+        <div class="aviso">
+            <?= h($erroAdoteca) ?>
+            <br>
+            Tente atualizar a página mais tarde.
         </div>
-
-    </section>
-
     <?php endif; ?>
 
-
-    <section class="adocao-local">
-
-        <h2>
-            Onde procurar adoção em Patos/PB
-        </h2>
-
-
-        <div class="local-item">
-
-            <h3>
-                Adotar.com.br
-            </h3>
-
-            <p>
-                Plataforma com anúncios de cães e gatos
-                disponíveis para adoção em Patos/PB.
-            </p>
-
-            <a
-                href="https://adotar.com.br/adocao-de-animais/patos-pb"
-                target="_blank"
-                class="botao botao-secundario"
-            >
-                Ver animais de Patos
-            </a>
-
+    <section class="secao">
+        <div class="secao-cabecalho">
+            <h2>Animais da comunidade</h2>
+            <span class="contador">
+                <?= count($animaisLocais) ?> anúncio(s) encontrado(s)
+            </span>
         </div>
 
+        <?php if (count($animaisLocais) === 0): ?>
+            <div class="vazio">
+                Nenhum anúncio local encontrado com esses filtros.
+                Você pode cadastrar um animal para adoção.
+            </div>
+        <?php else: ?>
+            <div class="galeria">
+                <?php foreach ($animaisLocais as $animal): ?>
+                    <?php
+                    $fotoLocal = '';
 
-        <div class="local-item">
+                    if (!empty($animal['foto'])) {
+                        $caminhoFoto = (string)$animal['foto'];
 
-            <h3>
-                Adote Cat - Patos/PB
-            </h3>
+                        if (
+                            preg_match('~^https?://~i', $caminhoFoto)
+                        ) {
+                            $fotoLocal = urlSegura($caminhoFoto);
+                        } elseif (strpos($caminhoFoto, '/') === false) {
+                            $fotoLocal = 'uploads/adocao/' . rawurlencode($caminhoFoto);
+                        } else {
+                            $fotoLocal = $caminhoFoto;
+                        }
+                    }
+                    ?>
 
-            <p>
-                Protetor de animais que atua em Patos.
-                A página consultada informa cães e gatos
-                disponíveis para adoção.
-            </p>
+                    <article class="cartao">
+                        <?php if ($fotoLocal !== ''): ?>
+                            <img
+                                class="foto"
+                                src="<?= h($fotoLocal) ?>"
+                                alt="Foto de <?= h($animal['nome'] ?? 'animal') ?>"
+                                loading="lazy"
+                            >
+                        <?php else: ?>
+                            <div class="sem-foto">Foto não disponível</div>
+                        <?php endif; ?>
 
-            <a
-                href="https://www.adoteca.com.br/protetor/adote-cat-patos-pb-w2aajv"
-                target="_blank"
-                class="botao botao-secundario"
-            >
-                Ver perfil do protetor
-            </a>
+                        <div class="cartao-conteudo">
+                            <h3><?= h($animal['nome'] ?? 'Animal') ?></h3>
 
-        </div>
+                            <div class="detalhes">
+                                <span class="etiqueta">
+                                    <?= h(valorOuPadrao($animal['especie'] ?? null)) ?>
+                                </span>
 
+                                <?php if (!empty($animal['idade'])): ?>
+                                    <span class="etiqueta"><?= h($animal['idade']) ?></span>
+                                <?php endif; ?>
 
-        <div class="local-item">
+                                <?php if (!empty($animal['porte'])): ?>
+                                    <span class="etiqueta"><?= h($animal['porte']) ?></span>
+                                <?php endif; ?>
+                            </div>
 
-            <h3>
-                Prefeitura de Patos
-            </h3>
+                            <div class="informacoes">
+                                <p><strong>Raça:</strong> <?= h(valorOuPadrao($animal['raca'] ?? null)) ?></p>
+                                <p><strong>Sexo:</strong> <?= h(valorOuPadrao($animal['sexo'] ?? null)) ?></p>
+                                <p>
+                                    <strong>Local:</strong>
+                                    <?= h(valorOuPadrao($animal['cidade'] ?? null)) ?>
+                                    <?= !empty($animal['uf']) ? ' - ' . h($animal['uf']) : '' ?>
+                                </p>
+                                <p><strong>Vacinado:</strong> <?= h(simNaoDesconhecido($animal['vacinado'] ?? null)) ?></p>
+                                <p><strong>Castrado:</strong> <?= h(simNaoDesconhecido($animal['castrado'] ?? null)) ?></p>
+                                <p><?= nl2br(h($animal['descricao'] ?? '')) ?></p>
+                            </div>
 
-            <p>
-                A Prefeitura possui informações relacionadas
-                à proteção animal e à apreensão de animais.
-                Para informações sobre processos de doação
-                de animais apreendidos, a Prefeitura orienta
-                procurar a Secretaria de Agricultura.
-            </p>
+                            <div class="acoes">
+                                <?php if (!empty($animal['contato'])): ?>
+                                    <?php
+                                    $contato = trim((string)$animal['contato']);
+                                    $linkContato = '';
 
-            <p>
-                <strong>Contato informado:</strong>
-                (83) 9 9352-3393
-            </p>
+                                    if (filter_var($contato, FILTER_VALIDATE_EMAIL)) {
+                                        $linkContato = 'mailto:' . $contato;
+                                    } elseif (preg_match('/^[+\d()\s.-]{8,}$/', $contato)) {
+                                        $telefone = preg_replace('/\D+/', '', $contato);
+                                        $linkContato = 'https://wa.me/' . $telefone;
+                                    }
+                                    ?>
 
-            <a
-                href="https://patos.pb.gov.br/apreensao_de_animais"
-                target="_blank"
-                class="botao botao-secundario"
-            >
-                Informações da Prefeitura
-            </a>
-
-        </div>
-
-
-        <div class="local-item">
-
-            <h3>
-                Associação Adota Patos
-            </h3>
-
-            <p>
-                A legislação municipal registra a existência
-                da Associação Adota Patos, voltada à proteção
-                e ao cuidado de animais abandonados.
-            </p>
-
-            <a
-                href="https://camarapatos.pb.legisgov.com.br/ta/946/text"
-                target="_blank"
-                class="botao botao-secundario"
-            >
-                Ver informações oficiais
-            </a>
-
-        </div>
-
+                                    <?php if ($linkContato !== ''): ?>
+                                        <a
+                                            class="botao"
+                                            href="<?= h($linkContato) ?>"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                        >Entrar em contato</a>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </article>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
     </section>
 
+    <section class="secao">
+        <div class="secao-cabecalho">
+            <h2>Animais da Adoteca</h2>
 
-    <div class="aviso">
+            <span class="contador">
+                <?= $totalAdoteca ?> resultado(s) informado(s) pela API
+            </span>
+        </div>
 
-        <strong>
-            Adoção responsável
-        </strong>
+        <p class="informacoes">
+            Os anúncios abaixo vêm de uma fonte externa. Fotos, dados e
+            disponibilidade são fornecidos pela Adoteca.
+        </p>
 
-        <br><br>
+        <?php if (count($animaisAdoteca) === 0): ?>
+            <?php if ($erroAdoteca === ''): ?>
+                <div class="vazio">
+                    Nenhum animal foi retornado com os filtros atuais.
+                </div>
+            <?php endif; ?>
+        <?php else: ?>
+            <div class="galeria">
+                <?php foreach ($animaisAdoteca as $animal): ?>
+                    <?php
+                    $foto = urlSegura($animal['photo_url'] ?? '');
+                    $linkAnuncio = urlSegura($animal['adoption_url'] ?? '');
+                    $linkContato = urlSegura($animal['contact_url'] ?? '');
 
-        Antes de adotar, verifique as condições do animal,
-        converse com o responsável pela adoção e confirme
-        informações sobre vacinação, vermifugação, castração
-        e atendimento veterinário.
+                    $responsavel = $animal['rescuer']['name'] ?? '';
+                    $instagram = urlSegura(
+                        $animal['rescuer']['instagram_url'] ?? ''
+                    );
 
-        <br><br>
+                    $status = strtolower((string)($animal['status'] ?? ''));
 
-        A Prefeitura de Patos também possui políticas e ações
-        relacionadas à proteção e ao bem-estar animal.
-        Em uma ação realizada em março de 2026, por exemplo,
-        houve atendimento veterinário e espaço para adoção
-        responsável. :contentReference[oaicite:2]{index=2}
+                    if ($status !== 'available') {
+                        continue;
+                    }
+                    ?>
 
-    </div>
+                    <article class="cartao">
+                        <?php if ($foto !== ''): ?>
+                            <img
+                                class="foto"
+                                src="<?= h($foto) ?>"
+                                alt="Foto do animal <?= h($animal['name'] ?? '') ?>"
+                                loading="lazy"
+                                referrerpolicy="no-referrer"
+                            >
+                        <?php else: ?>
+                            <div class="sem-foto">Foto não disponível</div>
+                        <?php endif; ?>
 
+                        <div class="cartao-conteudo">
+                            <h3><?= h($animal['name'] ?? 'Animal para adoção') ?></h3>
 
-    <div class="fonte">
+                            <div class="detalhes">
+                                <span class="etiqueta">
+                                    <?= h(valorOuPadrao($animal['species'] ?? null)) ?>
+                                </span>
 
-        <strong>
-            Fontes consultadas:
-        </strong>
+                                <?php if (!empty($animal['age'])): ?>
+                                    <span class="etiqueta"><?= h($animal['age']) ?></span>
+                                <?php endif; ?>
 
-        <br><br>
+                                <?php if (!empty($animal['size'])): ?>
+                                    <span class="etiqueta"><?= h($animal['size']) ?></span>
+                                <?php endif; ?>
+                            </div>
 
-        <a
-            href="https://adotar.com.br/adocao-de-animais/patos-pb"
-            target="_blank"
-        >
-            Adotar.com.br — animais para adoção em Patos
-        </a>
+                            <div class="informacoes">
+                                <p>
+                                    <strong>Raça:</strong>
+                                    <?= h(valorOuPadrao($animal['breed'] ?? null)) ?>
+                                </p>
 
-        <br>
+                                <p>
+                                    <strong>Sexo:</strong>
+                                    <?= h(valorOuPadrao($animal['sex'] ?? null)) ?>
+                                </p>
 
-        <a
-            href="https://www.adoteca.com.br/protetor/adote-cat-patos-pb-w2aajv"
-            target="_blank"
-        >
-            Adoteca — Adote Cat
-        </a>
+                                <p>
+                                    <strong>Cidade:</strong>
+                                    <?= h(valorOuPadrao($animal['city'] ?? null)) ?>
+                                </p>
 
-        <br>
+                                <p>
+                                    <strong>Vacinado:</strong>
+                                    <?= h(simNaoDesconhecido($animal['vaccinated'] ?? null)) ?>
+                                </p>
 
-        <a
-            href="https://patos.pb.gov.br/apreensao_de_animais"
-            target="_blank"
-        >
-            Prefeitura de Patos — Apreensão de Animais
-        </a>
+                                <p>
+                                    <strong>Castrado:</strong>
+                                    <?= h(simNaoDesconhecido($animal['neutered'] ?? null)) ?>
+                                </p>
 
-    </div>
+                                <?php if ($responsavel !== ''): ?>
+                                    <p><strong>Responsável:</strong> <?= h($responsavel) ?></p>
+                                <?php endif; ?>
 
+                                <?php if ($instagram !== ''): ?>
+                                    <p>
+                                        <a href="<?= h($instagram) ?>"
+                                           target="_blank"
+                                           rel="noopener noreferrer">
+                                            Instagram do responsável
+                                        </a>
+                                    </p>
+                                <?php endif; ?>
+
+                                <?php if (isset($animal['days_without_update'])): ?>
+                                    <p>
+                                        <strong>Última atualização informada:</strong>
+                                        há <?= (int)$animal['days_without_update'] ?>
+                                        dia(s)
+                                    </p>
+                                <?php endif; ?>
+                            </div>
+
+                            <div class="acoes">
+                                <?php if ($linkAnuncio !== ''): ?>
+                                    <a
+                                        class="botao botao-secundario"
+                                        href="<?= h($linkAnuncio) ?>"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                    >Ver anúncio</a>
+                                <?php endif; ?>
+
+                                <?php if ($linkContato !== ''): ?>
+                                    <a
+                                        class="botao"
+                                        href="<?= h($linkContato) ?>"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                    >Quero adotar</a>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </article>
+                <?php endforeach; ?>
+            </div>
+
+            <?php if ($paginasAdoteca > 1): ?>
+                <nav class="paginacao" aria-label="Paginação dos anúncios da Adoteca">
+                    <?php if ($paginaAdoteca > 1): ?>
+                        <a
+                            class="botao botao-secundario"
+                            href="?<?= h(http_build_query([
+                                'busca' => $busca,
+                                'especie' => $especie,
+                                'pagina_adoteca' => $paginaAdoteca - 1
+                            ])) ?>"
+                        >← Anterior</a>
+                    <?php endif; ?>
+
+                    <span>
+                        Página <?= $paginaAdoteca ?> de <?= $paginasAdoteca ?>
+                    </span>
+
+                    <?php if ($paginaAdoteca < $paginasAdoteca): ?>
+                        <a
+                            class="botao botao-secundario"
+                            href="?<?= h(http_build_query([
+                                'busca' => $busca,
+                                'especie' => $especie,
+                                'pagina_adoteca' => $paginaAdoteca + 1
+                            ])) ?>"
+                        >Próxima →</a>
+                    <?php endif; ?>
+                </nav>
+            <?php endif; ?>
+        <?php endif; ?>
+
+        <p class="informacoes">
+            A disponibilidade pode mudar. Confirme as informações diretamente
+            com o responsável antes de combinar a adoção.
+        </p>
+    </section>
 </main>
 
-
 <footer>
-
-    Saúde-Conecta © <?= date('Y') ?>
-
-    <br>
-
-    Cuidado com a saúde. Cuidado com os animais.
-
+    Saúde-Conecta — adoção responsável de animais.
 </footer>
-
 </body>
-
 </html>
