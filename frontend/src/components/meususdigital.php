@@ -1,738 +1,210 @@
+
 <?php
 
 session_start();
 
-
-/*
-|--------------------------------------------------------------------------
-| VERIFICAR LOGIN
-|--------------------------------------------------------------------------
-*/
-
-if (!isset($_SESSION['usuario'])) {
-
+if (empty($_SESSION['usuario']['id'])) {
     header('Location: ../pages/login.php');
-
     exit;
 }
 
+function e($valor): string
+{
+    return htmlspecialchars(
+        (string)($valor ?? ''),
+        ENT_QUOTES,
+        'UTF-8'
+    );
+}
 
-/*
-|--------------------------------------------------------------------------
-| DADOS DO USUÁRIO
-|--------------------------------------------------------------------------
-*/
+$nome = $_SESSION['usuario']['nome'] ?? 'Cidadão';
+$email = $_SESSION['usuario']['email'] ?? '';
 
-$usuario = $_SESSION['usuario'];
-
-$nome = $usuario['nomeCompleto'] ?? 'Usuário';
-
+$portalMeuSUS = 'https://meususdigital.saude.gov.br/';
 ?>
-
 <!DOCTYPE html>
-
 <html lang="pt-BR">
-
 <head>
-
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0"
-    >
-
-    <title>
-        Meu SUS Digital - Saúde Conecta
-    </title>
-
+    <title>Meu SUS Digital | Saúde-Conecta</title>
 
     <style>
-
         * {
-            margin: 0;
-            padding: 0;
             box-sizing: border-box;
         }
 
-
         body {
-
-            font-family:
-                Arial,
-                Helvetica,
-                sans-serif;
-
-            background: #f3f7f9;
-
-            color: #263238;
-
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            background: #f2f8f7;
+            color: #263c3c;
         }
-
-
-        /* =========================
-           HEADER
-        ========================== */
 
         header {
-
-            background:
-                linear-gradient(
-                    135deg,
-                    #087f5b,
-                    #0b9b6e
-                );
-
+            background: #087f8c;
             color: white;
-
-            padding: 20px 30px;
-
+            padding: 18px 5%;
             display: flex;
-
-            justify-content:
-                space-between;
-
+            justify-content: space-between;
             align-items: center;
-
-            box-shadow:
-                0 3px 10px
-                rgba(0,0,0,0.15);
-
+            gap: 14px;
+            flex-wrap: wrap;
         }
-
 
         header h1 {
-
-            font-size: 25px;
-
+            margin: 0;
+            font-size: 24px;
         }
 
-
-        header p {
-
-            margin-top: 5px;
-
-            opacity: 0.9;
-
-        }
-
-
-        .btn-voltar {
-
-            background: white;
-
-            color: #087f5b;
-
-            text-decoration: none;
-
-            padding: 10px 18px;
-
-            border-radius: 8px;
-
-            font-weight: bold;
-
-        }
-
-
-        /* =========================
-           CONTAINER
-        ========================== */
-
-        .container {
-
-            width: 95%;
-
-            max-width: 950px;
-
-            margin: 40px auto;
-
-        }
-
-
-        /* =========================
-           CARD PRINCIPAL
-        ========================== */
-
-        .card {
-
-            background: white;
-
-            border-radius: 18px;
-
-            padding: 40px;
-
-            box-shadow:
-                0 5px 20px
-                rgba(0,0,0,0.08);
-
-            margin-bottom: 25px;
-
-        }
-
-
-        .icone {
-
-            width: 90px;
-
-            height: 90px;
-
-            background: #087f5b;
-
-            color: white;
-
-            border-radius: 50%;
-
+        nav {
             display: flex;
-
-            align-items: center;
-
-            justify-content: center;
-
-            font-size: 45px;
-
-            margin: 0 auto 20px;
-
+            flex-wrap: wrap;
+            gap: 10px;
         }
 
+        nav a {
+            color: white;
+            text-decoration: none;
+            border: 1px solid #ffffff88;
+            border-radius: 7px;
+            padding: 9px 12px;
+        }
+
+        main {
+            width: min(900px, 92%);
+            margin: 30px auto;
+        }
+
+        .painel {
+            background: white;
+            border-radius: 14px;
+            padding: 26px;
+            box-shadow: 0 4px 18px #173d3b0d;
+            margin-bottom: 20px;
+        }
 
         h2 {
-
-            text-align: center;
-
-            color: #087f5b;
-
-            margin-bottom: 15px;
-
+            color: #087f8c;
         }
 
-
-        .descricao {
-
-            text-align: center;
-
-            line-height: 1.7;
-
-            color: #4b5563;
-
-            max-width: 700px;
-
-            margin: auto;
-
+        p {
+            line-height: 1.65;
         }
-
-
-        /* =========================
-           INFORMAÇÕES
-        ========================== */
-
-        .informacoes {
-
-            display: grid;
-
-            grid-template-columns:
-                repeat(2, 1fr);
-
-            gap: 18px;
-
-            margin-top: 30px;
-
-        }
-
-
-        .informacao {
-
-            background: #f8fafc;
-
-            border: 1px solid #e5e7eb;
-
-            padding: 20px;
-
-            border-radius: 12px;
-
-        }
-
-
-        .informacao h3 {
-
-            color: #087f5b;
-
-            margin-bottom: 8px;
-
-        }
-
-
-        .informacao p {
-
-            color: #555;
-
-            line-height: 1.5;
-
-        }
-
-
-        /* =========================
-           BOTÃO
-        ========================== */
-
-        .btn-sus {
-
-            display: block;
-
-            width: 100%;
-
-            background: #087f5b;
-
-            color: white;
-
-            text-decoration: none;
-
-            text-align: center;
-
-            padding: 16px;
-
-            border-radius: 10px;
-
-            font-size: 17px;
-
-            font-weight: bold;
-
-            margin-top: 30px;
-
-            transition: 0.2s;
-
-        }
-
-
-        .btn-sus:hover {
-
-            background: #066b4c;
-
-            transform: translateY(-1px);
-
-        }
-
-
-        /* =========================
-           AVISO
-        ========================== */
 
         .aviso {
-
+            padding: 15px;
             background: #fff8e6;
+            border: 1px solid #f0d58c;
+            color: #684c0d;
+            border-radius: 9px;
+            margin: 20px 0;
+        }
 
-            border-left:
-                5px solid #f59e0b;
-
-            padding: 18px;
-
+        .botao {
+            display: inline-block;
+            padding: 12px 16px;
             border-radius: 8px;
-
-            margin-top: 25px;
-
-            line-height: 1.6;
-
+            background: #087f8c;
+            color: white;
+            text-decoration: none;
+            font-weight: bold;
         }
 
-
-        /* =========================
-           SEGURANÇA
-        ========================== */
-
-        .seguranca {
-
-            background: #eef7ff;
-
-            border-left:
-                5px solid #2563eb;
-
-            padding: 18px;
-
-            border-radius: 8px;
-
-            margin-top: 15px;
-
-            line-height: 1.6;
-
+        .botao:hover {
+            background: #066773;
         }
 
-
-        /* =========================
-           RECURSOS
-        ========================== */
-
-        .recursos {
-
-            margin-top: 30px;
-
+        .secundario {
+            background: #e6f3f3;
+            color: #075d65;
         }
 
-
-        .recursos h3 {
-
-            color: #087f5b;
-
-            margin-bottom: 15px;
-
+        .acoes {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 20px;
         }
 
-
-        .recursos ul {
-
-            list-style: none;
-
+        .nota {
+            font-size: 13px;
+            color: #5a7070;
         }
 
-
-        .recursos li {
-
-            padding: 12px 0;
-
-            border-bottom:
-                1px solid #eeeeee;
-
+        footer {
+            padding: 24px;
+            text-align: center;
+            color: #617777;
         }
-
-
-        /* =========================
-           RESPONSIVO
-        ========================== */
-
-        @media (max-width: 650px) {
-
-            header {
-
-                flex-direction: column;
-
-                gap: 15px;
-
-                text-align: center;
-
-            }
-
-
-            .card {
-
-                padding: 25px 18px;
-
-            }
-
-
-            .informacoes {
-
-                grid-template-columns: 1fr;
-
-            }
-
-        }
-
     </style>
-
 </head>
 
-
 <body>
-
-
 <header>
+    <h1>Saúde-Conecta</h1>
 
-
-    <div>
-
-        <h1>
-            Saúde Conecta
-        </h1>
-
-        <p>
-            Integração com o Meu SUS Digital
-        </p>
-
-    </div>
-
-
-    <a
-        href="perfil_saude.php"
-        class="btn-voltar"
-    >
-
-        ← Voltar ao perfil
-
-    </a>
-
-
+    <nav>
+        <a href="perfil_saude.php">Meu perfil</a>
+        <a href="mapa.php">Mapa de saúde</a>
+        <a href="logout.php">Sair</a>
+    </nav>
 </header>
 
+<main>
+    <section class="painel">
+        <h2>Meu SUS Digital</h2>
 
-<main class="container">
-
-
-    <!-- =========================
-         CARD PRINCIPAL
-    ========================== -->
-
-    <section class="card">
-
-
-        <div class="icone">
-
-            🏥
-
-        </div>
-
-
-        <h2>
-
-            Conectar ao Meu SUS Digital
-
-        </h2>
-
-
-        <p class="descricao">
-
-            Olá,
-
-            <strong>
-
-                <?= htmlspecialchars(
-                    $nome,
-                    ENT_QUOTES,
-                    'UTF-8'
-                ) ?>
-
-            </strong>!
-
-            <br><br>
-
-            O Meu SUS Digital é a plataforma oficial
-            do Ministério da Saúde para acesso do cidadão
-            aos seus serviços e informações de saúde
-            disponibilizados pelos sistemas do SUS.
-
+        <p>
+            Olá, <?= e($nome) ?>! Esta página ajuda você a acessar o
+            portal oficial Meu SUS Digital.
         </p>
 
-
-        <!-- =========================
-             INFORMAÇÕES
-        ========================== -->
-
-        <div class="informacoes">
-
-
-            <div class="informacao">
-
-                <h3>
-                    💉 Vacinação
-                </h3>
-
-                <p>
-
-                    Consulte os registros de vacinação
-                    que estiverem disponíveis nos sistemas
-                    integrados.
-
-                </p>
-
-            </div>
-
-
-            <div class="informacao">
-
-                <h3>
-                    🏥 Histórico de saúde
-                </h3>
-
-                <p>
-
-                    Consulte informações de saúde
-                    disponibilizadas pelos sistemas
-                    integrados ao SUS.
-
-                </p>
-
-            </div>
-
-
-            <div class="informacao">
-
-                <h3>
-                    💊 Medicamentos
-                </h3>
-
-                <p>
-
-                    Consulte informações sobre
-                    medicamentos disponibilizados
-                    pela plataforma.
-
-                </p>
-
-            </div>
-
-
-            <div class="informacao">
-
-                <h3>
-                    🧪 Exames
-                </h3>
-
-                <p>
-
-                    Consulte exames e resultados
-                    disponíveis para o cidadão.
-
-                </p>
-
-            </div>
-
-
-        </div>
-
-
-        <!-- =========================
-             BOTÃO OFICIAL
-        ========================== -->
-
-        <a
-            href="https://meususdigital.saude.gov.br/"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="btn-sus"
-        >
-
-            🔐 Entrar no Meu SUS Digital
-
-        </a>
-
-
-        <!-- =========================
-             AVISO
-        ========================== -->
+        <?php if ($email !== ''): ?>
+            <p><strong>E-mail da sua conta Saúde-Conecta:</strong> <?= e($email) ?></p>
+        <?php endif; ?>
 
         <div class="aviso">
-
-            <strong>
-                ⚠️ Importante
-            </strong>
-
-            <br><br>
-
-            O Saúde Conecta não solicita sua senha
-            do Gov.br.
-
-            <br><br>
-
-            A autenticação deve ser realizada
-            diretamente no site oficial do
-            Meu SUS Digital.
-
+            <strong>Importante:</strong>
+            entrar no portal oficial não significa que os dados médicos
+            serão copiados automaticamente para o Saúde-Conecta.
+            Não informe sua senha do Meu SUS Digital nesta página.
         </div>
 
+        <h3>Como acessar seus dados</h3>
 
-        <!-- =========================
-             SEGURANÇA
-        ========================== -->
+        <ol>
+            <li>Abra o portal oficial pelo botão abaixo.</li>
+            <li>Entre diretamente no serviço oficial usando o método de acesso solicitado por ele.</li>
+            <li>Consulte os dados disponibilizados para sua conta.</li>
+            <li>Se precisar registrar alguma informação no Saúde-Conecta, utilize as funcionalidades disponíveis no perfil de saúde.</li>
+        </ol>
 
-        <div class="seguranca">
+        <div class="acoes">
+            <a
+                class="botao"
+                href="<?= e($portalMeuSUS) ?>"
+                target="_blank"
+                rel="noopener noreferrer"
+            >
+                Abrir Meu SUS Digital
+            </a>
 
-            <strong>
-                🔒 Segurança dos dados
-            </strong>
-
-            <br><br>
-
-            Seus dados de saúde são informações
-            pessoais sensíveis. O Saúde Conecta
-            não deve armazenar sua senha do Gov.br.
-
-            <br><br>
-
-            A importação automática de dados para
-            o Saúde Conecta deverá utilizar a
-            integração oficial disponibilizada
-            pelo Ministério da Saúde/RNDS.
-
+            <a class="botao secundario" href="perfil_saude.php">
+                Voltar ao perfil de saúde
+            </a>
         </div>
 
-
-        <!-- =========================
-             RECURSOS
-        ========================== -->
-
-        <div class="recursos">
-
-            <h3>
-                Informações que podem estar disponíveis
-            </h3>
-
-
-            <ul>
-
-                <li>
-                    💉 Registros de vacinação
-                </li>
-
-                <li>
-                    🏥 Informações de atendimentos
-                </li>
-
-                <li>
-                    🧪 Exames disponíveis
-                </li>
-
-                <li>
-                    💊 Medicamentos
-                </li>
-
-                <li>
-                    📄 Outros dados disponibilizados
-                    pelos sistemas oficiais
-                </li>
-
-            </ul>
-
-        </div>
-
-
+        <p class="nota">
+            O Saúde-Conecta não está conectado automaticamente ao sistema
+            do Ministério da Saúde por meio desta página. Uma integração
+            real exige uma interface oficial compatível, autorização
+            adequada e medidas para proteger os dados pessoais de saúde.
+        </p>
     </section>
-
-
-    <!-- =========================
-         OUTROS BOTÕES
-    ========================== -->
-
-    <section class="card">
-
-
-        <h2>
-            Acessar outros recursos
-        </h2>
-
-
-        <a
-            href="perfil_saude.php"
-            class="btn-sus"
-        >
-
-            👤 Voltar para o Perfil de Saúde
-
-        </a>
-
-
-        <a
-            href="mapa.php"
-            class="btn-sus"
-        >
-
-            🗺️ Acessar Mapa de Saúde
-
-        </a>
-
-
-    </section>
-
-
 </main>
 
-
+<footer>Saúde-Conecta — acesso às informações de saúde.</footer>
 </body>
-
 </html>

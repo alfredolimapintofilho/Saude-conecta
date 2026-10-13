@@ -1,6 +1,4 @@
-
 <?php
-declare(strict_types=1);
 
 if (session_status() !== PHP_SESSION_ACTIVE) {
     session_start();
@@ -9,165 +7,216 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
 require_once __DIR__ . '/../../../backend/config/database.php';
 require_once __DIR__ . '/../../../backend/services/AdotecaClient.php';
 
-$pdo = null;
-$erroLocal = '';
-$erroAdoteca = '';
+$pdo = Database::getConnection();
 
-$animaisLocais = [];
-$animaisAdoteca = [];
-$totalAdoteca = 0;
+$busca = trim($_GET['busca'] ?? '');
+$especieFiltro = trim($_GET['especie'] ?? '');
+
+$disponiveisLocais = [];
+$adotadosLocais = [];
+$disponiveisAdoteca = [];
+$adotadosAdoteca = [];
+$statusIncertoAdoteca = [];
+
+$erroBanco = '';
+$erroAdoteca = '';
 
 function h($valor): string
 {
     return htmlspecialchars(
-        (string)($valor ?? ''),
+        (string) ($valor ?? ''),
         ENT_QUOTES,
         'UTF-8'
     );
 }
 
-function valorOuPadrao($valor, string $padrao = 'Não informado'): string
+function nomeEspecie(string $especie): string
 {
-    if ($valor === null || trim((string)$valor) === '') {
-        return $padrao;
-    }
+    $especies = [
+        'dog' => 'Cachorro',
+        'dogs' => 'Cachorro',
+        'cat' => 'Gato',
+        'cats' => 'Gato',
+        'bird' => 'Ave',
+        'rabbit' => 'Coelho',
+        'hamster' => 'Hamster',
+        'guinea_pig' => 'Porquinho-da-índia',
+        'horse' => 'Cavalo',
+        'cow' => 'Bovino',
+        'Cachorro' => 'Cachorro',
+        'Gato' => 'Gato',
+    ];
 
-    return (string)$valor;
+    $chave = strtolower(trim($especie));
+
+    return $especies[$chave]
+        ?? ucfirst(str_replace(['_', '-'], ' ', $especie));
 }
 
-/**
- * Aceita somente links HTTP/HTTPS.
- */
-function urlSegura($url): string
+/*
+|--------------------------------------------------------------------------
+| Identificação do status do anúncio
+|--------------------------------------------------------------------------
+*/
+
+function classificarStatus($status): string
 {
-    if (!is_string($url) || trim($url) === '') {
-        return '';
+    if (!is_string($status) && !is_numeric($status)) {
+        return 'incerto';
     }
 
-    $partes = parse_url($url);
+    $status = strtolower(trim((string) $status));
+
+    $status = strtr($status, [
+        'á' => 'a',
+        'à' => 'a',
+        'ã' => 'a',
+        'â' => 'a',
+        'é' => 'e',
+        'ê' => 'e',
+        'í' => 'i',
+        'ó' => 'o',
+        'ô' => 'o',
+        'õ' => 'o',
+        'ú' => 'u',
+        'ç' => 'c',
+    ]);
+
+    $adotados = [
+        'adotado',
+        'adotada',
+        'ja adotado',
+        'ja adotada',
+        'adopted',
+        'adopted_pet',
+        'adopted_successfully',
+        'adocao concluida',
+        'adocao finalizada',
+        'adoption_completed',
+        'adopted_out',
+    ];
+
+    $disponiveis = [
+        'disponivel',
+        'disponivel para adocao',
+        'available',
+        'active',
+        'published',
+        'publicado',
+        'publicada',
+        'para adocao',
+        'available_for_adoption',
+        'looking_for_home',
+    ];
+
+    if (in_array($status, $adotados, true)) {
+        return 'adotado';
+    }
+
+    if (in_array($status, $disponiveis, true)) {
+        return 'disponivel';
+    }
+
+    return 'incerto';
+}
+
+/*
+|--------------------------------------------------------------------------
+| Extrair os animais da resposta da Adoteca
+|--------------------------------------------------------------------------
+*/
+
+function extrairAnimaisAdoteca($resposta): array
+{
+    if (is_string($resposta)) {
+        $resposta = json_decode($resposta, true);
+    }
+
+    if (!is_array($resposta)) {
+        return [];
+    }
 
     if (
-        !is_array($partes) ||
-        !isset($partes['scheme'], $partes['host']) ||
-        !in_array(strtolower($partes['scheme']), ['http', 'https'], true)
+        isset($resposta['pets'])
+        && is_array($resposta['pets'])
     ) {
-        return '';
+        return $resposta['pets'];
     }
 
-    return $url;
-}
-
-/**
- * Converte respostas do MCP para a estrutura:
- * ['total' => ..., 'pets' => [...]]
- */
-function extrairResultadoAdoteca($resposta): array
-{
-    if (!is_array($resposta)) {
-        throw new RuntimeException(
-            'A resposta da Adoteca não está no formato esperado.'
-        );
-    }
-
-    if (!empty($resposta['isError'])) {
-        throw new RuntimeException(
-            'A API da Adoteca retornou um erro.'
-        );
-    }
-
-    $candidatos = [];
-
-    if (isset($resposta['structuredContent']['result'])) {
-        $candidatos[] = $resposta['structuredContent']['result'];
-    }
-
-    if (isset($resposta['result'])) {
-        $candidatos[] = $resposta['result'];
-    }
-
-    if (isset($resposta['structuredContent'])) {
-        $candidatos[] = $resposta['structuredContent'];
-    }
-
-    if (isset($resposta['content']) && is_array($resposta['content'])) {
+    if (
+        isset($resposta['content'])
+        && is_array($resposta['content'])
+    ) {
         foreach ($resposta['content'] as $item) {
-            if (!empty($item['text']) && is_string($item['text'])) {
-                $decodificado = json_decode(
-                    $item['text'],
-                    true
-                );
+            if (
+                !isset($item['text'])
+                || !is_string($item['text'])
+            ) {
+                continue;
+            }
 
-                if (is_array($decodificado)) {
-                    $candidatos[] = $decodificado;
-                }
+            $dados = json_decode($item['text'], true);
+
+            if (!is_array($dados)) {
+                continue;
+            }
+
+            if (
+                isset($dados['pets'])
+                && is_array($dados['pets'])
+            ) {
+                return $dados['pets'];
+            }
+
+            if (array_is_list($dados)) {
+                return $dados;
             }
         }
     }
 
-    foreach ($candidatos as $candidato) {
-        if (isset($candidato['result']) && is_array($candidato['result'])) {
-            $candidato = $candidato['result'];
-        }
-
-        if (isset($candidato['pets']) && is_array($candidato['pets'])) {
-            return [
-                'total' => (int)($candidato['total'] ?? count($candidato['pets'])),
-                'page' => (int)($candidato['page'] ?? 1),
-                'pets' => $candidato['pets']
-            ];
-        }
-    }
-
-    throw new RuntimeException(
-        'Não foi possível encontrar a lista de animais na resposta da API.'
-    );
+    return array_is_list($resposta) ? $resposta : [];
 }
 
-function simNaoDesconhecido($valor): string
+/*
+|--------------------------------------------------------------------------
+| Caminho das fotos dos anúncios locais
+|--------------------------------------------------------------------------
+*/
+
+function caminhoFotoLocal(?string $foto): string
 {
-    if ($valor === true || $valor === 1 || $valor === '1') {
-        return 'Sim';
+    if (!$foto) {
+        return '';
     }
 
-    if ($valor === false || $valor === 0 || $valor === '0') {
-        return 'Não';
+    if (filter_var($foto, FILTER_VALIDATE_URL)) {
+        return $foto;
     }
 
-    return 'Não informado';
+    if (str_starts_with($foto, '/')) {
+        return $foto;
+    }
+
+    if (str_contains($foto, 'uploads/')) {
+        return '/Saude-conecta/frontend/src/pages/'
+            . ltrim($foto, '/');
+    }
+
+    return '/Saude-conecta/frontend/src/pages/uploads/adocao/'
+        . rawurlencode(basename($foto));
 }
 
-// Filtros
-$especie = strtolower(trim((string)($_GET['especie'] ?? '')));
-$busca = trim((string)($_GET['busca'] ?? ''));
-$paginaAdoteca = filter_input(
-    INPUT_GET,
-    'pagina_adoteca',
-    FILTER_VALIDATE_INT
-);
-
-$paginaAdoteca = max(1, $paginaAdoteca ?: 1);
-$limiteAdoteca = 10;
-
-$especiesPermitidas = [
-    '',
-    'cachorro',
-    'gato'
-];
-
-if (!in_array($especie, $especiesPermitidas, true)) {
-    $especie = '';
-}
+/*
+|--------------------------------------------------------------------------
+| 1. Buscar anúncios locais disponíveis e já adotados
+|--------------------------------------------------------------------------
+*/
 
 try {
-    $pdo = Database::getConnection();
-
-    /*
-     * Anúncios cadastrados pelos usuários do Saúde-Conecta.
-     * Este código considera a tabela pets_adocao criada anteriormente.
-     */
     $sql = "
         SELECT
             id,
+            usuario_id,
             nome,
             especie,
             raca,
@@ -181,119 +230,297 @@ try {
             castrado,
             contato,
             foto,
-            status
+            status,
+            criado_em
         FROM pets_adocao
-        WHERE status = 'disponivel'
+        WHERE status IN ('disponivel', 'adotado')
     ";
 
     $parametros = [];
 
-    if ($especie !== '') {
-        $sql .= ' AND LOWER(especie) = :especie';
-        $parametros[':especie'] = $especie;
-    }
-
     if ($busca !== '') {
-        $sql .= ' AND (nome LIKE :busca OR cidade LIKE :busca OR raca LIKE :busca)';
-        $parametros[':busca'] = '%' . $busca . '%';
+        $sql .= "
+            AND (
+                nome LIKE :nome
+                OR descricao LIKE :descricao
+                OR raca LIKE :raca
+                OR cidade LIKE :cidade
+            )
+        ";
+
+        $termo = '%' . $busca . '%';
+
+        $parametros[':nome'] = $termo;
+        $parametros[':descricao'] = $termo;
+        $parametros[':raca'] = $termo;
+        $parametros[':cidade'] = $termo;
     }
 
-    $sql .= ' ORDER BY criado_em DESC';
+    if ($especieFiltro !== '') {
+        $sql .= " AND especie = :especie";
+        $parametros[':especie'] = $especieFiltro;
+    }
 
-    $consulta = $pdo->prepare($sql);
-    $consulta->execute($parametros);
-    $animaisLocais = $consulta->fetchAll(PDO::FETCH_ASSOC);
+    $sql .= " ORDER BY criado_em DESC";
 
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($parametros);
+
+    $animaisLocais = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($animaisLocais as $animal) {
+        if ($animal['status'] === 'adotado') {
+            $adotadosLocais[] = $animal;
+        } elseif ($animal['status'] === 'disponivel') {
+            $disponiveisLocais[] = $animal;
+        }
+    }
 } catch (Throwable $e) {
-    $erroLocal = 'Não foi possível carregar os anúncios locais. '
+    $erroBanco = 'Não foi possível carregar os anúncios locais. '
         . 'Confira a tabela pets_adocao e suas colunas.';
-
-    error_log('[Saude-Conecta] Erro nos anúncios locais: ' . $e->getMessage());
 }
 
 /*
- * Busca animais na API da Adoteca.
- *
- * A implementação já testada aceita cidade, estado,
- * espécie e quantidade. A página solicitada é enviada
- * somente se a classe oferecer esse parâmetro.
- */
+|--------------------------------------------------------------------------
+| 2. Consultar a Adoteca e separar por status
+|--------------------------------------------------------------------------
+*/
+
 try {
     $cliente = new AdotecaClient();
 
-    $metodo = new ReflectionMethod($cliente, 'buscarPets');
+    $resposta = $cliente->buscarPets(
+        'Patos',
+        'PB',
+        $especieFiltro,
+        20
+    );
 
-    if ($metodo->getNumberOfParameters() >= 5) {
-        $resposta = $cliente->buscarPets(
-            'Patos',
-            'PB',
-            $especie,
-            $limiteAdoteca,
-            $paginaAdoteca
-        );
-    } else {
-        $resposta = $cliente->buscarPets(
-            'Patos',
-            'PB',
-            $especie,
-            $limiteAdoteca
-        );
-    }
+    $animaisExternos = extrairAnimaisAdoteca($resposta);
 
-    $resultado = extrairResultadoAdoteca($resposta);
+    foreach ($animaisExternos as $animal) {
+        if (!is_array($animal)) {
+            continue;
+        }
 
-    $totalAdoteca = $resultado['total'];
-    $animaisAdoteca = $resultado['pets'];
+        if ($busca !== '') {
+            $texto = implode(' ', [
+                $animal['name'] ?? '',
+                $animal['species'] ?? '',
+                $animal['breed'] ?? '',
+                $animal['city'] ?? '',
+                $animal['description'] ?? '',
+            ]);
 
-    // Filtro textual complementar, aplicado aos resultados recebidos.
-    if ($busca !== '') {
-        $termo = function_exists('mb_strtolower')
-            ? mb_strtolower($busca, 'UTF-8')
-            : strtolower($busca);
-
-        $animaisAdoteca = array_values(array_filter(
-            $animaisAdoteca,
-            function ($animal) use ($termo) {
-                $texto = implode(' ', [
-                    $animal['name'] ?? '',
-                    $animal['species'] ?? '',
-                    $animal['breed'] ?? '',
-                    $animal['city'] ?? ''
-                ]);
-
-                $texto = function_exists('mb_strtolower')
-                    ? mb_strtolower($texto, 'UTF-8')
-                    : strtolower($texto);
-
-                return strpos($texto, $termo) !== false;
+            if (stripos($texto, $busca) === false) {
+                continue;
             }
-        ));
-    }
+        }
 
+        $statusAnimal = classificarStatus(
+            $animal['status'] ?? null
+        );
+
+        if ($statusAnimal === 'adotado') {
+            $adotadosAdoteca[] = $animal;
+        } elseif ($statusAnimal === 'disponivel') {
+            $disponiveisAdoteca[] = $animal;
+        } else {
+            $statusIncertoAdoteca[] = $animal;
+        }
+    }
 } catch (Throwable $e) {
-    $erroAdoteca = 'Não foi possível carregar os animais da Adoteca neste momento. '
+    $erroAdoteca = 'Não foi possível consultar a Adoteca agora. '
         . 'Os anúncios locais continuam disponíveis.';
-
-    error_log('[Saude-Conecta / Adoteca] ' . $e->getMessage());
 }
 
-$paginasAdoteca = max(
-    1,
-    (int)ceil($totalAdoteca / $limiteAdoteca)
-);
+/*
+|--------------------------------------------------------------------------
+| 3. Cartão reutilizável para anúncios locais
+|--------------------------------------------------------------------------
+*/
 
-$nomeUsuario = 'Visitante';
+function exibirAnimalLocal(array $animal, bool $jaAdotado = false): void
+{
+    $foto = caminhoFotoLocal($animal['foto'] ?? null);
+    ?>
+    <article class="animal">
+        <?php if ($foto !== ''): ?>
+            <img
+                src="<?= h($foto) ?>"
+                alt="Foto de <?= h($animal['nome']) ?>"
+                loading="lazy"
+            >
+        <?php else: ?>
+            <div class="sem-foto">🐾</div>
+        <?php endif; ?>
 
-if (isset($_SESSION['usuario'])) {
-    if (is_array($_SESSION['usuario'])) {
-        $nomeUsuario = $_SESSION['usuario']['nomeCompleto']
-            ?? $_SESSION['usuario']['nome']
-            ?? $_SESSION['usuario']['nome_completo']
-            ?? 'Usuário';
-    } elseif (is_string($_SESSION['usuario'])) {
-        $nomeUsuario = $_SESSION['usuario'];
-    }
+        <div class="conteudo">
+            <h3><?= h($animal['nome']) ?></h3>
+
+            <div class="detalhes">
+                <strong>Espécie:</strong>
+                <?= h(nomeEspecie($animal['especie'] ?? '')) ?><br>
+
+                <?php if (!empty($animal['raca'])): ?>
+                    <strong>Raça:</strong> <?= h($animal['raca']) ?><br>
+                <?php endif; ?>
+
+                <?php if (!empty($animal['sexo'])): ?>
+                    <strong>Sexo:</strong> <?= h($animal['sexo']) ?><br>
+                <?php endif; ?>
+
+                <?php if (!empty($animal['idade'])): ?>
+                    <strong>Idade:</strong> <?= h($animal['idade']) ?><br>
+                <?php endif; ?>
+
+                <?php if (!empty($animal['porte'])): ?>
+                    <strong>Porte:</strong> <?= h($animal['porte']) ?><br>
+                <?php endif; ?>
+
+                <strong>Local:</strong>
+                <?= h($animal['cidade']) ?> - <?= h($animal['uf']) ?>
+            </div>
+
+            <?php if ($jaAdotado): ?>
+                <span class="etiqueta adotado">Já adotado</span>
+            <?php else: ?>
+                <div class="etiquetas">
+                    <?php if (!empty($animal['vacinado'])): ?>
+                        <span class="etiqueta">Vacinado</span>
+                    <?php endif; ?>
+
+                    <?php if (!empty($animal['castrado'])): ?>
+                        <span class="etiqueta">Castrado</span>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+
+            <?php if (!empty($animal['descricao'])): ?>
+                <p><?= nl2br(h($animal['descricao'])) ?></p>
+            <?php endif; ?>
+
+            <?php if (!$jaAdotado && !empty($animal['contato'])): ?>
+                <p>
+                    <strong>Contato:</strong>
+                    <?= h($animal['contato']) ?>
+                </p>
+            <?php endif; ?>
+
+            <div class="fonte">Saúde-Conecta</div>
+        </div>
+    </article>
+    <?php
 }
+
+/*
+|--------------------------------------------------------------------------
+| 4. Cartão reutilizável para anúncios da Adoteca
+|--------------------------------------------------------------------------
+*/
+
+function exibirAnimalAdoteca(
+    array $animal,
+    bool $jaAdotado = false
+): void {
+    $nome = $animal['name'] ?? 'Animal para adoção';
+    $especie = $animal['species'] ?? '';
+    $foto = $animal['photo_url'] ?? '';
+    $urlAdocao = $animal['adoption_url'] ?? '';
+    $urlContato = $animal['contact_url'] ?? '';
+
+    $fotoValida = filter_var($foto, FILTER_VALIDATE_URL);
+    $urlValida = filter_var($urlAdocao, FILTER_VALIDATE_URL);
+    $contatoValido = filter_var($urlContato, FILTER_VALIDATE_URL);
+    ?>
+    <article class="animal">
+        <?php if ($fotoValida): ?>
+            <img
+                src="<?= h($foto) ?>"
+                alt="Foto de <?= h($nome) ?>"
+                loading="lazy"
+            >
+        <?php else: ?>
+            <div class="sem-foto">🐾</div>
+        <?php endif; ?>
+
+        <div class="conteudo">
+            <h3><?= h($nome) ?></h3>
+
+            <div class="detalhes">
+                <?php if ($especie !== ''): ?>
+                    <strong>Espécie:</strong>
+                    <?= h(nomeEspecie($especie)) ?><br>
+                <?php endif; ?>
+
+                <?php if (!empty($animal['breed'])): ?>
+                    <strong>Raça:</strong>
+                    <?= h($animal['breed']) ?><br>
+                <?php endif; ?>
+
+                <?php if (!empty($animal['sex'])): ?>
+                    <strong>Sexo:</strong>
+                    <?= h($animal['sex']) ?><br>
+                <?php endif; ?>
+
+                <?php if (!empty($animal['age'])): ?>
+                    <strong>Idade:</strong>
+                    <?= h($animal['age']) ?><br>
+                <?php endif; ?>
+
+                <?php if (!empty($animal['size'])): ?>
+                    <strong>Porte:</strong>
+                    <?= h($animal['size']) ?><br>
+                <?php endif; ?>
+
+                <?php if (!empty($animal['city'])): ?>
+                    <strong>Local:</strong>
+                    <?= h($animal['city']) ?><br>
+                <?php endif; ?>
+            </div>
+
+            <?php if ($jaAdotado): ?>
+                <span class="etiqueta adotado">Já adotado</span>
+            <?php else: ?>
+                <div class="etiquetas">
+                    <?php if (!empty($animal['vaccinated'])): ?>
+                        <span class="etiqueta">Vacinado</span>
+                    <?php endif; ?>
+
+                    <?php if (!empty($animal['neutered'])): ?>
+                        <span class="etiqueta">Castrado</span>
+                    <?php endif; ?>
+                </div>
+            <?php endif; ?>
+
+            <div class="fonte">Fonte: Adoteca</div>
+
+            <?php if ($urlValida): ?>
+                <a
+                    class="botao principal"
+                    href="<?= h($urlAdocao) ?>"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >
+                    <?= $jaAdotado ? 'Ver registro original' : 'Ver anúncio original' ?>
+                </a>
+            <?php endif; ?>
+
+            <?php if (!$jaAdotado && $contatoValido): ?>
+                <a
+                    class="botao secundario"
+                    href="<?= h($urlContato) ?>"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >
+                    Ver contato
+                </a>
+            <?php endif; ?>
+        </div>
+    </article>
+    <?php
+}
+
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -304,35 +531,26 @@ if (isset($_SESSION['usuario'])) {
     <title>Adoção de Animais | Saúde-Conecta</title>
 
     <style>
-        :root {
-            --verde: #16794b;
-            --verde-escuro: #105c39;
-            --fundo: #f4f8f5;
-            --texto: #23332a;
-            --borda: #dce8df;
-            --branco: #fff;
-        }
-
         * {
             box-sizing: border-box;
         }
 
         body {
             margin: 0;
-            background: var(--fundo);
-            color: var(--texto);
             font-family: Arial, Helvetica, sans-serif;
+            background: #f4f7f6;
+            color: #263238;
         }
 
         header {
-            background: var(--verde);
+            background: #167d68;
             color: white;
-            padding: 20px;
+            padding: 24px 20px;
         }
 
         .cabecalho,
-        main {
-            width: min(1180px, 94%);
+        .container {
+            max-width: 1200px;
             margin: auto;
         }
 
@@ -341,627 +559,402 @@ if (isset($_SESSION['usuario'])) {
             justify-content: space-between;
             align-items: center;
             flex-wrap: wrap;
-            gap: 12px;
+            gap: 15px;
         }
 
         header h1 {
+            margin: 0 0 8px;
+        }
+
+        header p {
             margin: 0;
-            font-size: 1.5rem;
+            line-height: 1.5;
         }
 
-        header a {
-            color: white;
-            font-weight: bold;
+        .container {
+            padding: 25px 18px 45px;
+        }
+
+        .acoes,
+        .etiquetas {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 9px;
+        }
+
+        .acoes {
+            margin-bottom: 22px;
+        }
+
+        .botao {
+            display: inline-block;
+            padding: 11px 15px;
+            border: 0;
+            border-radius: 8px;
             text-decoration: none;
+            font-size: 14px;
+            font-weight: bold;
+            text-align: center;
+            cursor: pointer;
+            transition: background 0.2s ease, transform 0.2s ease;
         }
 
-        main {
-            padding: 28px 0 50px;
+        .botao:hover {
+            transform: translateY(-1px);
         }
 
-        .introducao {
-            margin-bottom: 24px;
+        .principal {
+            background: #167d68;
+            color: white;
         }
 
-        .introducao h2 {
-            margin-bottom: 8px;
-            font-size: 1.9rem;
+        .principal:hover {
+            background: #116653;
         }
 
-        .introducao p {
-            line-height: 1.6;
-            color: #53675a;
+        .secundario {
+            background: #e4efec;
+            color: #165d50;
+        }
+
+        .secundario:hover {
+            background: #d2e5df;
         }
 
         .filtros {
+            background: white;
+            padding: 18px;
+            border-radius: 12px;
+            margin-bottom: 25px;
+        }
+
+        .filtros form {
             display: grid;
-            grid-template-columns: minmax(180px, 1fr) 190px auto;
+            grid-template-columns: 2fr 1fr auto auto;
             gap: 12px;
-            background: white;
-            border: 1px solid var(--borda);
-            border-radius: 14px;
-            padding: 16px;
-            margin-bottom: 30px;
+            align-items: end;
         }
 
-        input,
-        select,
-        button {
-            font: inherit;
-            min-height: 44px;
-            border-radius: 8px;
-        }
-
-        input,
-        select {
-            width: 100%;
-            padding: 10px 12px;
-            border: 1px solid #cbd9ce;
-            background: white;
-        }
-
-        button,
-        .botao {
-            display: inline-flex;
-            justify-content: center;
-            align-items: center;
-            padding: 10px 15px;
-            border: 0;
-            background: var(--verde);
-            color: white;
+        .campo label {
+            display: block;
             font-weight: bold;
-            text-decoration: none;
-            cursor: pointer;
+            margin-bottom: 7px;
+        }
+
+        .campo input,
+        .campo select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #cbd5d1;
             border-radius: 8px;
+            background: white;
         }
 
-        button:hover,
-        .botao:hover {
-            background: var(--verde-escuro);
-        }
-
-        .botao-secundario {
-            background: #e9f4ed;
-            color: var(--verde-escuro);
-        }
-
-        .botao-secundario:hover {
-            background: #d7eadc;
+        .campo input:focus,
+        .campo select:focus {
+            outline: 2px solid #9dd5c5;
+            border-color: #167d68;
         }
 
         .secao {
-            margin-top: 32px;
+            margin-top: 30px;
         }
 
-        .secao-cabecalho {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            flex-wrap: wrap;
-            gap: 10px;
-            margin-bottom: 16px;
+        .secao h2 {
+            margin-bottom: 6px;
+            font-size: 23px;
         }
 
-        .secao-cabecalho h2 {
-            margin: 0;
-            font-size: 1.45rem;
+        .secao > p {
+            color: #63736d;
+            line-height: 1.5;
         }
 
-        .contador {
-            color: #53675a;
-            font-size: .95rem;
-        }
-
-        .galeria {
+        .grade {
             display: grid;
             grid-template-columns: repeat(3, minmax(0, 1fr));
             gap: 20px;
         }
 
-        .cartao {
+        .animal {
             background: white;
-            border: 1px solid var(--borda);
-            border-radius: 14px;
+            border-radius: 13px;
             overflow: hidden;
             display: flex;
             flex-direction: column;
             min-width: 0;
-            box-shadow: 0 3px 12px rgb(20 60 35 / 5%);
+            box-shadow: 0 3px 12px #0000000d;
         }
 
-        .foto {
+        .animal img,
+        .sem-foto {
             width: 100%;
-            height: 230px;
+            height: 220px;
             object-fit: cover;
-            background: #eaf0eb;
+            background: #e8efec;
         }
 
         .sem-foto {
-            height: 230px;
             display: flex;
-            align-items: center;
             justify-content: center;
-            background: #eaf0eb;
-            color: #526b5a;
+            align-items: center;
+            font-size: 52px;
         }
 
-        .cartao-conteudo {
-            padding: 16px;
+        .conteudo {
+            padding: 17px;
             display: flex;
             flex-direction: column;
             gap: 10px;
             flex: 1;
-        }
-
-        .cartao h3 {
-            margin: 0;
-            font-size: 1.25rem;
             overflow-wrap: anywhere;
         }
 
+        .conteudo h3 {
+            margin: 0;
+            font-size: 20px;
+        }
+
         .detalhes {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 7px;
+            font-size: 14px;
+            line-height: 1.7;
+            color: #52645d;
+        }
+
+        .conteudo p {
+            font-size: 14px;
+            line-height: 1.6;
         }
 
         .etiqueta {
             display: inline-block;
-            padding: 5px 8px;
+            background: #e7f4ef;
+            color: #176650;
             border-radius: 20px;
-            background: #edf5ef;
-            color: #28563b;
-            font-size: .82rem;
+            padding: 6px 10px;
+            font-size: 12px;
+            align-self: flex-start;
         }
 
-        .informacoes {
-            color: #53675a;
-            font-size: .93rem;
-            line-height: 1.5;
-            overflow-wrap: anywhere;
+        .etiqueta.adotado {
+            background: #e8e8e8;
+            color: #444;
         }
 
-        .informacoes p {
-            margin: 3px 0;
-        }
-
-        .acoes {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
+        .fonte {
+            color: #718078;
+            font-size: 12px;
             margin-top: auto;
-            padding-top: 8px;
         }
 
-        .acoes a {
-            flex: 1 1 120px;
-            text-align: center;
+        .aviso,
+        .vazio {
+            padding: 15px;
+            border-radius: 9px;
+            margin: 12px 0;
+            line-height: 1.6;
         }
 
         .aviso {
-            border: 1px solid #eadca8;
-            background: #fff9df;
-            color: #6b5515;
-            border-radius: 10px;
-            padding: 12px 14px;
-            margin: 14px 0;
-            line-height: 1.5;
+            background: #fff7e5;
+            border: 1px solid #f1d9a3;
+            color: #795b16;
         }
 
         .vazio {
-            border: 1px dashed #cbd9ce;
             background: white;
-            border-radius: 12px;
-            padding: 25px;
-            color: #53675a;
-            text-align: center;
-        }
-
-        .paginacao {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 12px;
-            margin: 24px 0;
+            color: #64746d;
         }
 
         footer {
+            padding: 20px;
             text-align: center;
-            padding: 22px;
-            color: #637568;
-            font-size: .9rem;
+            color: #708079;
+            font-size: 13px;
         }
 
-        @media (max-width: 850px) {
-            .galeria {
+        @media (max-width: 900px) {
+            .grade {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
 
-            .filtros {
+            .filtros form {
                 grid-template-columns: 1fr 1fr;
-            }
-
-            .filtros button {
-                grid-column: 1 / -1;
             }
         }
 
-        @media (max-width: 560px) {
-            .galeria,
-            .filtros {
+        @media (max-width: 600px) {
+            .grade,
+            .filtros form {
                 grid-template-columns: 1fr;
-            }
-
-            .introducao h2 {
-                font-size: 1.5rem;
-            }
-
-            .foto,
-            .sem-foto {
-                height: 250px;
             }
         }
     </style>
 </head>
 
 <body>
+
 <header>
     <div class="cabecalho">
-        <h1>Saúde-Conecta | Adoção de Animais</h1>
+        <div>
+            <h1>🐾 Adoção de Animais</h1>
+            <p>Encontre um companheiro e ajude um animal a encontrar um lar.</p>
+        </div>
 
-        <nav aria-label="Navegação principal">
-            <a href="perfil_saude.php">Meu perfil</a>
-            &nbsp; | &nbsp;
-            <a href="pets.php">Meus pets</a>
-            &nbsp; | &nbsp;
-            <a href="cadastrar_pet_adocao.php">Cadastrar anúncio</a>
-        </nav>
+        <!-- CORREÇÃO: caminho para perfil_saude.php na pasta components -->
+        <a
+            class="botao secundario"
+            href="../components/perfil_saude.php"
+        >
+            ← Voltar ao perfil
+        </a>
     </div>
 </header>
 
-<main>
-    <section class="introducao">
-        <h2>Encontre um amigo para a vida toda 🐾</h2>
+<main class="container">
 
-        <p>
-            Veja animais anunciados pela comunidade do Saúde-Conecta
-            e pela Adoteca. Consulte o anúncio original para confirmar
-            a disponibilidade e combinar a adoção com o responsável.
-        </p>
-
-        <p>Olá, <?= h($nomeUsuario) ?>!</p>
-
-        <a class="botao" href="cadastrar_pet_adocao.php">
-            + Anunciar animal para adoção
+    <div class="acoes">
+        <a class="botao principal" href="cadastrar_pet_adocao.php">
+            + Cadastrar animal para adoção
         </a>
-    </section>
 
-    <form class="filtros" method="get">
-        <input
-            type="search"
-            name="busca"
-            placeholder="Buscar por nome, raça ou cidade"
-            value="<?= h($busca) ?>"
-        >
+        <a class="botao secundario" href="pets.php">
+            Meus animais
+        </a>
+    </div>
 
-        <select name="especie" aria-label="Filtrar por espécie">
-            <option value="" <?= $especie === '' ? 'selected' : '' ?>>
-                Todas as espécies
-            </option>
-            <option value="cachorro" <?= $especie === 'cachorro' ? 'selected' : '' ?>>
-                Cachorros
-            </option>
-            <option value="gato" <?= $especie === 'gato' ? 'selected' : '' ?>>
-                Gatos
-            </option>
-        </select>
-
-        <button type="submit">Buscar animais</button>
-    </form>
-
-    <?php if ($erroLocal !== ''): ?>
-        <div class="aviso"><?= h($erroLocal) ?></div>
+    <?php if ($erroBanco !== ''): ?>
+        <div class="aviso"><?= h($erroBanco) ?></div>
     <?php endif; ?>
 
     <?php if ($erroAdoteca !== ''): ?>
-        <div class="aviso">
-            <?= h($erroAdoteca) ?>
-            <br>
-            Tente atualizar a página mais tarde.
-        </div>
+        <div class="aviso"><?= h($erroAdoteca) ?></div>
     <?php endif; ?>
 
-    <section class="secao">
-        <div class="secao-cabecalho">
-            <h2>Animais da comunidade</h2>
-            <span class="contador">
-                <?= count($animaisLocais) ?> anúncio(s) encontrado(s)
-            </span>
-        </div>
+    <section class="filtros">
+        <form method="GET" action="adocao_pets.php">
+            <div class="campo">
+                <label for="busca">Buscar animal</label>
+                <input
+                    id="busca"
+                    type="text"
+                    name="busca"
+                    value="<?= h($busca) ?>"
+                    placeholder="Nome, raça ou cidade"
+                >
+            </div>
 
-        <?php if (count($animaisLocais) === 0): ?>
+            <div class="campo">
+                <label for="especie">Espécie</label>
+                <select id="especie" name="especie">
+                    <option value="">Todas as espécies</option>
+                    <?php
+                    $opcoes = [
+                        'Cachorro',
+                        'Gato',
+                        'Ave',
+                        'Coelho',
+                        'Hamster',
+                        'Porquinho-da-índia',
+                        'Cavalo',
+                        'Outro',
+                    ];
+                    ?>
+
+                    <?php foreach ($opcoes as $opcao): ?>
+                        <option
+                            value="<?= h($opcao) ?>"
+                            <?= $especieFiltro === $opcao ? 'selected' : '' ?>
+                        >
+                            <?= h($opcao) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <button class="botao principal" type="submit">
+                Buscar
+            </button>
+
+            <a class="botao secundario" href="adocao_pets.php">
+                Limpar
+            </a>
+        </form>
+    </section>
+
+    <section class="secao">
+        <h2>Disponíveis para adoção</h2>
+        <p>Animais cujo anúncio indica que ainda estão disponíveis.</p>
+
+        <?php if ($disponiveisLocais || $disponiveisAdoteca): ?>
+            <div class="grade">
+                <?php foreach ($disponiveisLocais as $animal): ?>
+                    <?php exibirAnimalLocal($animal); ?>
+                <?php endforeach; ?>
+
+                <?php foreach ($disponiveisAdoteca as $animal): ?>
+                    <?php exibirAnimalAdoteca($animal); ?>
+                <?php endforeach; ?>
+            </div>
+        <?php else: ?>
             <div class="vazio">
-                Nenhum anúncio local encontrado com esses filtros.
-                Você pode cadastrar um animal para adoção.
-            </div>
-        <?php else: ?>
-            <div class="galeria">
-                <?php foreach ($animaisLocais as $animal): ?>
-                    <?php
-                    $fotoLocal = '';
-
-                    if (!empty($animal['foto'])) {
-                        $caminhoFoto = (string)$animal['foto'];
-
-                        if (
-                            preg_match('~^https?://~i', $caminhoFoto)
-                        ) {
-                            $fotoLocal = urlSegura($caminhoFoto);
-                        } elseif (strpos($caminhoFoto, '/') === false) {
-                            $fotoLocal = 'uploads/adocao/' . rawurlencode($caminhoFoto);
-                        } else {
-                            $fotoLocal = $caminhoFoto;
-                        }
-                    }
-                    ?>
-
-                    <article class="cartao">
-                        <?php if ($fotoLocal !== ''): ?>
-                            <img
-                                class="foto"
-                                src="<?= h($fotoLocal) ?>"
-                                alt="Foto de <?= h($animal['nome'] ?? 'animal') ?>"
-                                loading="lazy"
-                            >
-                        <?php else: ?>
-                            <div class="sem-foto">Foto não disponível</div>
-                        <?php endif; ?>
-
-                        <div class="cartao-conteudo">
-                            <h3><?= h($animal['nome'] ?? 'Animal') ?></h3>
-
-                            <div class="detalhes">
-                                <span class="etiqueta">
-                                    <?= h(valorOuPadrao($animal['especie'] ?? null)) ?>
-                                </span>
-
-                                <?php if (!empty($animal['idade'])): ?>
-                                    <span class="etiqueta"><?= h($animal['idade']) ?></span>
-                                <?php endif; ?>
-
-                                <?php if (!empty($animal['porte'])): ?>
-                                    <span class="etiqueta"><?= h($animal['porte']) ?></span>
-                                <?php endif; ?>
-                            </div>
-
-                            <div class="informacoes">
-                                <p><strong>Raça:</strong> <?= h(valorOuPadrao($animal['raca'] ?? null)) ?></p>
-                                <p><strong>Sexo:</strong> <?= h(valorOuPadrao($animal['sexo'] ?? null)) ?></p>
-                                <p>
-                                    <strong>Local:</strong>
-                                    <?= h(valorOuPadrao($animal['cidade'] ?? null)) ?>
-                                    <?= !empty($animal['uf']) ? ' - ' . h($animal['uf']) : '' ?>
-                                </p>
-                                <p><strong>Vacinado:</strong> <?= h(simNaoDesconhecido($animal['vacinado'] ?? null)) ?></p>
-                                <p><strong>Castrado:</strong> <?= h(simNaoDesconhecido($animal['castrado'] ?? null)) ?></p>
-                                <p><?= nl2br(h($animal['descricao'] ?? '')) ?></p>
-                            </div>
-
-                            <div class="acoes">
-                                <?php if (!empty($animal['contato'])): ?>
-                                    <?php
-                                    $contato = trim((string)$animal['contato']);
-                                    $linkContato = '';
-
-                                    if (filter_var($contato, FILTER_VALIDATE_EMAIL)) {
-                                        $linkContato = 'mailto:' . $contato;
-                                    } elseif (preg_match('/^[+\d()\s.-]{8,}$/', $contato)) {
-                                        $telefone = preg_replace('/\D+/', '', $contato);
-                                        $linkContato = 'https://wa.me/' . $telefone;
-                                    }
-                                    ?>
-
-                                    <?php if ($linkContato !== ''): ?>
-                                        <a
-                                            class="botao"
-                                            href="<?= h($linkContato) ?>"
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                        >Entrar em contato</a>
-                                    <?php endif; ?>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                    </article>
-                <?php endforeach; ?>
+                Nenhum animal com disponibilidade confirmada foi encontrado
+                para os filtros escolhidos.
             </div>
         <?php endif; ?>
     </section>
 
     <section class="secao">
-        <div class="secao-cabecalho">
-            <h2>Animais da Adoteca</h2>
-
-            <span class="contador">
-                <?= $totalAdoteca ?> resultado(s) informado(s) pela API
-            </span>
-        </div>
-
-        <p class="informacoes">
-            Os anúncios abaixo vêm de uma fonte externa. Fotos, dados e
-            disponibilidade são fornecidos pela Adoteca.
+        <h2>Já adotados</h2>
+        <p>
+            Animais cujos anúncios indicam que a adoção foi concluída.
+            Eles aparecem aqui, separados dos disponíveis.
         </p>
 
-        <?php if (count($animaisAdoteca) === 0): ?>
-            <?php if ($erroAdoteca === ''): ?>
-                <div class="vazio">
-                    Nenhum animal foi retornado com os filtros atuais.
-                </div>
-            <?php endif; ?>
-        <?php else: ?>
-            <div class="galeria">
-                <?php foreach ($animaisAdoteca as $animal): ?>
-                    <?php
-                    $foto = urlSegura($animal['photo_url'] ?? '');
-                    $linkAnuncio = urlSegura($animal['adoption_url'] ?? '');
-                    $linkContato = urlSegura($animal['contact_url'] ?? '');
+        <?php if ($adotadosLocais || $adotadosAdoteca): ?>
+            <div class="grade">
+                <?php foreach ($adotadosLocais as $animal): ?>
+                    <?php exibirAnimalLocal($animal, true); ?>
+                <?php endforeach; ?>
 
-                    $responsavel = $animal['rescuer']['name'] ?? '';
-                    $instagram = urlSegura(
-                        $animal['rescuer']['instagram_url'] ?? ''
-                    );
-
-                    $status = strtolower((string)($animal['status'] ?? ''));
-
-                    if ($status !== 'available') {
-                        continue;
-                    }
-                    ?>
-
-                    <article class="cartao">
-                        <?php if ($foto !== ''): ?>
-                            <img
-                                class="foto"
-                                src="<?= h($foto) ?>"
-                                alt="Foto do animal <?= h($animal['name'] ?? '') ?>"
-                                loading="lazy"
-                                referrerpolicy="no-referrer"
-                            >
-                        <?php else: ?>
-                            <div class="sem-foto">Foto não disponível</div>
-                        <?php endif; ?>
-
-                        <div class="cartao-conteudo">
-                            <h3><?= h($animal['name'] ?? 'Animal para adoção') ?></h3>
-
-                            <div class="detalhes">
-                                <span class="etiqueta">
-                                    <?= h(valorOuPadrao($animal['species'] ?? null)) ?>
-                                </span>
-
-                                <?php if (!empty($animal['age'])): ?>
-                                    <span class="etiqueta"><?= h($animal['age']) ?></span>
-                                <?php endif; ?>
-
-                                <?php if (!empty($animal['size'])): ?>
-                                    <span class="etiqueta"><?= h($animal['size']) ?></span>
-                                <?php endif; ?>
-                            </div>
-
-                            <div class="informacoes">
-                                <p>
-                                    <strong>Raça:</strong>
-                                    <?= h(valorOuPadrao($animal['breed'] ?? null)) ?>
-                                </p>
-
-                                <p>
-                                    <strong>Sexo:</strong>
-                                    <?= h(valorOuPadrao($animal['sex'] ?? null)) ?>
-                                </p>
-
-                                <p>
-                                    <strong>Cidade:</strong>
-                                    <?= h(valorOuPadrao($animal['city'] ?? null)) ?>
-                                </p>
-
-                                <p>
-                                    <strong>Vacinado:</strong>
-                                    <?= h(simNaoDesconhecido($animal['vaccinated'] ?? null)) ?>
-                                </p>
-
-                                <p>
-                                    <strong>Castrado:</strong>
-                                    <?= h(simNaoDesconhecido($animal['neutered'] ?? null)) ?>
-                                </p>
-
-                                <?php if ($responsavel !== ''): ?>
-                                    <p><strong>Responsável:</strong> <?= h($responsavel) ?></p>
-                                <?php endif; ?>
-
-                                <?php if ($instagram !== ''): ?>
-                                    <p>
-                                        <a href="<?= h($instagram) ?>"
-                                           target="_blank"
-                                           rel="noopener noreferrer">
-                                            Instagram do responsável
-                                        </a>
-                                    </p>
-                                <?php endif; ?>
-
-                                <?php if (isset($animal['days_without_update'])): ?>
-                                    <p>
-                                        <strong>Última atualização informada:</strong>
-                                        há <?= (int)$animal['days_without_update'] ?>
-                                        dia(s)
-                                    </p>
-                                <?php endif; ?>
-                            </div>
-
-                            <div class="acoes">
-                                <?php if ($linkAnuncio !== ''): ?>
-                                    <a
-                                        class="botao botao-secundario"
-                                        href="<?= h($linkAnuncio) ?>"
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                    >Ver anúncio</a>
-                                <?php endif; ?>
-
-                                <?php if ($linkContato !== ''): ?>
-                                    <a
-                                        class="botao"
-                                        href="<?= h($linkContato) ?>"
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                    >Quero adotar</a>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                    </article>
+                <?php foreach ($adotadosAdoteca as $animal): ?>
+                    <?php exibirAnimalAdoteca($animal, true); ?>
                 <?php endforeach; ?>
             </div>
-
-            <?php if ($paginasAdoteca > 1): ?>
-                <nav class="paginacao" aria-label="Paginação dos anúncios da Adoteca">
-                    <?php if ($paginaAdoteca > 1): ?>
-                        <a
-                            class="botao botao-secundario"
-                            href="?<?= h(http_build_query([
-                                'busca' => $busca,
-                                'especie' => $especie,
-                                'pagina_adoteca' => $paginaAdoteca - 1
-                            ])) ?>"
-                        >← Anterior</a>
-                    <?php endif; ?>
-
-                    <span>
-                        Página <?= $paginaAdoteca ?> de <?= $paginasAdoteca ?>
-                    </span>
-
-                    <?php if ($paginaAdoteca < $paginasAdoteca): ?>
-                        <a
-                            class="botao botao-secundario"
-                            href="?<?= h(http_build_query([
-                                'busca' => $busca,
-                                'especie' => $especie,
-                                'pagina_adoteca' => $paginaAdoteca + 1
-                            ])) ?>"
-                        >Próxima →</a>
-                    <?php endif; ?>
-                </nav>
-            <?php endif; ?>
+        <?php else: ?>
+            <div class="vazio">
+                Nenhum animal com status de adoção concluída foi encontrado.
+            </div>
         <?php endif; ?>
-
-        <p class="informacoes">
-            A disponibilidade pode mudar. Confirme as informações diretamente
-            com o responsável antes de combinar a adoção.
-        </p>
     </section>
+
+    <?php if ($statusIncertoAdoteca): ?>
+        <section class="secao">
+            <h2>Status não confirmado</h2>
+            <p>
+                A fonte externa não informou um status reconhecível para
+                estes anúncios. Eles não são classificados como disponíveis
+                nem como adotados até que o status possa ser confirmado.
+            </p>
+
+            <div class="grade">
+                <?php foreach ($statusIncertoAdoteca as $animal): ?>
+                    <?php exibirAnimalAdoteca($animal); ?>
+                <?php endforeach; ?>
+            </div>
+        </section>
+    <?php endif; ?>
+
+    <p class="detalhes" style="margin-top: 25px;">
+        Os status externos dependem das informações fornecidas pela
+        plataforma de origem. Confirme a situação no anúncio original.
+    </p>
+
 </main>
 
 <footer>
-    Saúde-Conecta — adoção responsável de animais.
+    Saúde-Conecta — adoção responsável e cuidado com os animais.
 </footer>
+
 </body>
 </html>
