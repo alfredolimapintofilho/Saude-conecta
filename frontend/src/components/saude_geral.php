@@ -1,132 +1,182 @@
 <?php
 declare(strict_types=1);
 
-if (session_status() !== PHP_SESSION_ACTIVE) {
-    session_start();
-}
+/*
+|--------------------------------------------------------------------------
+| Saúde-Conecta — Informações de Saúde Geral
+|--------------------------------------------------------------------------
+| Arquivo: frontend/src/components/saude_geral.php
+|
+| Requisitos:
+| - backend/config/database.php
+| - backend/config/seguranca.php
+|
+| A página permite que o usuário autenticado consulte e atualize
+| apenas as próprias informações de saúde.
+|--------------------------------------------------------------------------
+*/
 
-if (empty($_SESSION['usuario']['id'])) {
-    header('Location: ../pages/login.php');
-    exit;
-}
+require_once __DIR__ . '/../../../backend/config/seguranca.php';
 
-require_once __DIR__ . '/../../../backend/config/database.php';
+iniciarSessaoSegura();
 
-$usuarioId = (int) $_SESSION['usuario']['id'];
-$mensagem = '';
-$tipoMensagem = '';
-$erroBanco = '';
+$pdo = Database::getConnection();
 
-$sexo = '';
-$peso = '';
-$altura = '';
-$tipoSanguineo = '';
-$gestante = 0;
+// Exige autenticação e confirma que a conta continua ativa.
+$usuarioSessao = exigirLogin();
+$usuarioAtual = exigirDonoDaConta($pdo);
 
-function h($valor): string
-{
-    return htmlspecialchars(
-        (string) ($valor ?? ''),
-        ENT_QUOTES,
-        'UTF-8'
-    );
-}
+$pacienteId = (int) $usuarioAtual['id'];
 
-function calcularIMC($peso, $altura): ?float
-{
-    if (
-        !is_numeric($peso) ||
-        !is_numeric($altura) ||
-        (float) $peso <= 0 ||
-        (float) $altura <= 0
-    ) {
-        return null;
-    }
+$erro = '';
+$sucesso = '';
+$dados = [];
+$colunasDisponiveis = [];
 
-    return (float) $peso / ((float) $altura ** 2);
-}
-
-function classificarIMC(float $imc): string
-{
-    if ($imc < 18.5) {
-        return 'Abaixo do peso';
-    }
-
-    if ($imc < 25) {
-        return 'Faixa considerada adequada';
-    }
-
-    if ($imc < 30) {
-        return 'Sobrepeso';
-    }
-
-    if ($imc < 35) {
-        return 'Obesidade grau I';
-    }
-
-    if ($imc < 40) {
-        return 'Obesidade grau II';
-    }
-
-    return 'Obesidade grau III';
-}
+/*
+|--------------------------------------------------------------------------
+| Descobrir as colunas existentes
+|--------------------------------------------------------------------------
+| Isso evita tentar ler ou gravar colunas que não existem na tabela.
+*/
 
 try {
-    $pdo = Database::getConnection();
+    $resultadoColunas = $pdo->query('SHOW COLUMNS FROM usuarios');
 
-    // Carrega os dados de saúde cadastrados.
-    $consulta = $pdo->prepare(
-        'SELECT sexo, peso, altura, tipo_sanguineo, gestante
-         FROM usuarios
-         WHERE id = :id
-         LIMIT 1'
-    );
+    foreach ($resultadoColunas->fetchAll(PDO::FETCH_ASSOC) as $coluna) {
+        $colunasDisponiveis[] = $coluna['Field'];
+    }
+} catch (Throwable $e) {
+    error_log($e->getMessage());
+    http_response_code(500);
+    exit('Não foi possível verificar a estrutura do banco de dados.');
+}
 
-    $consulta->execute(['id' => $usuarioId]);
-    $dados = $consulta->fetch();
+$camposSaude = [
+    'sexo',
+    'peso',
+    'altura',
+    'tipo_sanguineo',
+    'gestante',
+];
 
-    if (!$dados) {
-        throw new RuntimeException(
-            'Não foi possível localizar os dados da conta.'
-        );
+$camposAusentes = array_values(
+    array_diff($camposSaude, $colunasDisponiveis)
+);
+
+/*
+|--------------------------------------------------------------------------
+| Token de segurança dos formulários
+|--------------------------------------------------------------------------
+*/
+
+$tokenCsrf = gerarTokenCsrf();
+
+/*
+|--------------------------------------------------------------------------
+| Ler dados do titular
+|--------------------------------------------------------------------------
+*/
+
+try {
+    $camposConsulta = ['id'];
+
+    foreach ($camposSaude as $campo) {
+        if (in_array($campo, $colunasDisponiveis, true)) {
+            $camposConsulta[] = $campo;
+        }
     }
 
-    $sexo = (string) ($dados['sexo'] ?? '');
-    $peso = (string) ($dados['peso'] ?? '');
-    $altura = (string) ($dados['altura'] ?? '');
-    $tipoSanguineo = (string) ($dados['tipo_sanguineo'] ?? '');
-    $gestante = (int) ($dados['gestante'] ?? 0);
+    $sqlConsulta = 'SELECT '
+        . implode(', ', $camposConsulta)
+        . ' FROM usuarios WHERE id = :id LIMIT 1';
 
-    // Salva as alterações enviadas pelo formulário.
-    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        $sexoNovo = trim((string) ($_POST['sexo'] ?? ''));
-        $pesoNovo = str_replace(
-            ',',
-            '.',
-            trim((string) ($_POST['peso'] ?? ''))
-        );
-        $alturaNovo = str_replace(
-            ',',
-            '.',
-            trim((string) ($_POST['altura'] ?? ''))
-        );
-        $sangueNovo = trim(
-            (string) ($_POST['tipo_sanguineo'] ?? '')
-        );
+    $stmt = $pdo->prepare($sqlConsulta);
+    $stmt->execute(['id' => $pacienteId]);
 
-        $gestanteNova = (
-            $sexoNovo === 'Feminino' &&
-            ($_POST['gestante'] ?? '') === '1'
-        ) ? 1 : 0;
+    $dadosBanco = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$dadosBanco) {
+        http_response_code(404);
+        exit('Usuário não encontrado.');
+    }
+
+    $dados = $dadosBanco;
+} catch (Throwable $e) {
+    error_log($e->getMessage());
+    http_response_code(500);
+    exit('Não foi possível carregar suas informações de saúde.');
+}
+
+/*
+|--------------------------------------------------------------------------
+| Salvar informações de saúde
+|--------------------------------------------------------------------------
+*/
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    try {
+        validarTokenCsrf($_POST['csrf_token'] ?? null);
+
+        $sexo = trim((string) ($_POST['sexo'] ?? ''));
 
         $sexosPermitidos = [
             'Feminino',
             'Masculino',
             'Outro',
-            'Prefiro não informar'
+            'Prefiro não informar',
         ];
 
-        $sanguesPermitidos = [
+        if (!in_array($sexo, $sexosPermitidos, true)) {
+            throw new InvalidArgumentException(
+                'Selecione uma opção válida para o sexo.'
+            );
+        }
+
+        $pesoTexto = trim((string) ($_POST['peso'] ?? ''));
+        $alturaTexto = trim((string) ($_POST['altura'] ?? ''));
+        $tipoSanguineo = trim(
+            (string) ($_POST['tipo_sanguineo'] ?? '')
+        );
+
+        /*
+         * Aceita vírgula ou ponto como separador decimal.
+         */
+        $peso = null;
+        if ($pesoTexto !== '') {
+            $pesoNormalizado = str_replace(',', '.', $pesoTexto);
+
+            if (
+                !is_numeric($pesoNormalizado) ||
+                (float) $pesoNormalizado <= 0 ||
+                (float) $pesoNormalizado > 700
+            ) {
+                throw new InvalidArgumentException(
+                    'Informe um peso válido em quilogramas.'
+                );
+            }
+
+            $peso = (float) $pesoNormalizado;
+        }
+
+        $altura = null;
+        if ($alturaTexto !== '') {
+            $alturaNormalizada = str_replace(',', '.', $alturaTexto);
+
+            if (
+                !is_numeric($alturaNormalizada) ||
+                (float) $alturaNormalizada <= 0 ||
+                (float) $alturaNormalizada > 2.8
+            ) {
+                throw new InvalidArgumentException(
+                    'Informe uma altura válida em metros. Exemplo: 1,75.'
+                );
+            }
+
+            $altura = (float) $alturaNormalizada;
+        }
+
+        $tiposSanguineosPermitidos = [
             '',
             'A+',
             'A-',
@@ -136,251 +186,238 @@ try {
             'AB-',
             'O+',
             'O-',
-            'Não sei'
         ];
 
-        if (!in_array($sexoNovo, $sexosPermitidos, true)) {
-            throw new InvalidArgumentException(
-                'Selecione uma opção válida para o sexo.'
-            );
-        }
-
-        if (!in_array($sangueNovo, $sanguesPermitidos, true)) {
+        if (
+            !in_array(
+                strtoupper($tipoSanguineo),
+                $tiposSanguineosPermitidos,
+                true
+            )
+        ) {
             throw new InvalidArgumentException(
                 'Selecione um tipo sanguíneo válido.'
             );
         }
 
-        $pesoBanco = null;
-        if ($pesoNovo !== '') {
-            if (!is_numeric($pesoNovo)) {
+        $tipoSanguineo = strtoupper($tipoSanguineo);
+
+        /*
+         * A gravidez só pode ser marcada nesta página quando
+         * o sexo selecionado for Feminino.
+         */
+        $gestante = 0;
+
+        if ($sexo === 'Feminino') {
+            $respostaGestante = $_POST['gestante'] ?? '0';
+
+            if (!in_array((string) $respostaGestante, ['0', '1'], true)) {
                 throw new InvalidArgumentException(
-                    'Informe um peso válido.'
+                    'Selecione se está grávida.'
                 );
             }
 
-            $pesoFloat = (float) $pesoNovo;
-
-            if ($pesoFloat < 1 || $pesoFloat > 500) {
-                throw new InvalidArgumentException(
-                    'O peso deve estar entre 1 e 500 kg.'
-                );
-            }
-
-            $pesoBanco = $pesoFloat;
+            $gestante = (int) $respostaGestante;
         }
 
-        $alturaBanco = null;
-        if ($alturaNovo !== '') {
-            if (!is_numeric($alturaNovo)) {
-                throw new InvalidArgumentException(
-                    'Informe uma altura válida.'
-                );
+        /*
+         * Monta o UPDATE somente com colunas conhecidas.
+         * Os nomes dos campos vêm de uma lista fixa.
+         */
+        $valores = [
+            'sexo' => $sexo,
+            'peso' => $peso,
+            'altura' => $altura,
+            'tipo_sanguineo' => $tipoSanguineo !== ''
+                ? $tipoSanguineo
+                : null,
+            'gestante' => $gestante,
+        ];
+
+        $atualizacoes = [];
+        $parametros = ['id' => $pacienteId];
+
+        foreach ($valores as $campo => $valor) {
+            if (in_array($campo, $colunasDisponiveis, true)) {
+                $atualizacoes[] = "{$campo} = :{$campo}";
+                $parametros[$campo] = $valor;
             }
-
-            $alturaFloat = (float) $alturaNovo;
-
-            // Aceita altura em centímetros ou metros.
-            if ($alturaFloat >= 100 && $alturaFloat <= 250) {
-                $alturaFloat = $alturaFloat / 100;
-            }
-
-            if ($alturaFloat < 0.5 || $alturaFloat > 2.5) {
-                throw new InvalidArgumentException(
-                    'Informe a altura em metros ou centímetros.'
-                );
-            }
-
-            $alturaBanco = $alturaFloat;
         }
 
-        $atualizar = $pdo->prepare(
-            'UPDATE usuarios
-             SET sexo = :sexo,
-                 peso = :peso,
-                 altura = :altura,
-                 tipo_sanguineo = :sangue,
-                 gestante = :gestante
-             WHERE id = :id'
-        );
+        if (empty($atualizacoes)) {
+            throw new RuntimeException(
+                'Nenhum campo de saúde está disponível para atualização.'
+            );
+        }
 
-        $atualizar->execute([
-            'sexo' => $sexoNovo,
-            'peso' => $pesoBanco,
-            'altura' => $alturaBanco,
-            'sangue' => $sangueNovo !== '' ? $sangueNovo : null,
-            'gestante' => $gestanteNova,
-            'id' => $usuarioId
-        ]);
+        $sqlAtualizacao = 'UPDATE usuarios SET '
+            . implode(', ', $atualizacoes)
+            . ' WHERE id = :id';
 
-        $sexo = $sexoNovo;
-        $peso = $pesoBanco !== null ? (string) $pesoBanco : '';
-        $altura = $alturaBanco !== null ? (string) $alturaBanco : '';
-        $tipoSanguineo = $sangueNovo;
-        $gestante = $gestanteNova;
+        $stmt = $pdo->prepare($sqlAtualizacao);
+        $stmt->execute($parametros);
 
-        $mensagem = 'Informações de saúde salvas com sucesso!';
-        $tipoMensagem = 'sucesso';
-    }
-} catch (InvalidArgumentException $e) {
-    $mensagem = $e->getMessage();
-    $tipoMensagem = 'erro';
-} catch (Throwable $e) {
-    $erroBanco = $e->getMessage();
+        $sucesso = 'Informações de saúde salvas com sucesso.';
 
-    if ($mensagem === '') {
-        $mensagem =
-            'Não foi possível carregar ou salvar as informações. ' .
-            'Confira a estrutura da tabela usuarios e a conexão com o banco.';
-        $tipoMensagem = 'erro';
+        // Atualiza os dados apresentados na tela.
+        foreach ($valores as $campo => $valor) {
+            if (in_array($campo, $colunasDisponiveis, true)) {
+                $dados[$campo] = $valor;
+            }
+        }
+
+        // Gera novo token após salvar.
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        $tokenCsrf = $_SESSION['csrf_token'];
+
+    } catch (InvalidArgumentException $e) {
+        $erro = $e->getMessage();
+    } catch (Throwable $e) {
+        error_log($e->getMessage());
+
+        if ($erro === '') {
+            $erro = 'Não foi possível salvar as informações. '
+                . 'Verifique os dados e tente novamente.';
+        }
     }
 }
 
-$imc = calcularIMC($peso, $altura);
+/*
+|--------------------------------------------------------------------------
+| Preparar valores para exibição
+|--------------------------------------------------------------------------
+*/
+
+$sexoAtual = (string) ($dados['sexo'] ?? '');
+$gestanteAtual = (int) ($dados['gestante'] ?? 0);
+
+function escaparSaude(mixed $valor): string
+{
+    return htmlspecialchars(
+        (string) ($valor ?? ''),
+        ENT_QUOTES,
+        'UTF-8'
+    );
+}
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Informações de Saúde Geral | Saúde-Conecta</title>
+
+    <title>Informações de Saúde Geral - Saúde-Conecta</title>
 
     <style>
         * {
             box-sizing: border-box;
         }
 
-        :root {
-            --verde: #16856b;
-            --verde-escuro: #116b56;
-            --fundo: #f3f8f6;
-            --texto: #263b35;
-            --borda: #dce9e3;
-            --rosa: #b94e78;
-        }
-
         body {
             margin: 0;
-            background: var(--fundo);
-            color: var(--texto);
+            background: #f2f7f8;
+            color: #263238;
             font-family: Arial, Helvetica, sans-serif;
         }
 
         header {
-            background: linear-gradient(135deg, #16856b, #31a68a);
-            color: white;
-            padding: 24px 18px;
+            background: #087f8c;
+            color: #fff;
+            padding: 20px;
         }
 
         .cabecalho {
-            max-width: 1100px;
-            margin: auto;
+            max-width: 1050px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 15px;
+            flex-wrap: wrap;
         }
 
         .cabecalho h1 {
-            margin: 0 0 8px;
-            font-size: clamp(25px, 4vw, 34px);
-        }
-
-        .cabecalho p {
             margin: 0;
-            line-height: 1.6;
-        }
-
-        main {
-            width: min(1100px, calc(100% - 30px));
-            margin: 28px auto 50px;
+            font-size: 24px;
         }
 
         .voltar {
             display: inline-block;
-            color: var(--verde-escuro);
-            font-weight: bold;
+            padding: 10px 15px;
+            border-radius: 8px;
+            color: #087f8c;
+            background: #fff;
             text-decoration: none;
-            margin-bottom: 20px;
+            font-weight: bold;
         }
 
-        .voltar:hover {
-            text-decoration: underline;
+        main {
+            max-width: 1050px;
+            margin: 30px auto;
+            padding: 0 18px 35px;
         }
 
-        .cartao {
-            background: white;
-            border: 1px solid var(--borda);
-            border-radius: 18px;
-            padding: 24px;
+        .painel {
+            background: #fff;
+            border-radius: 14px;
+            padding: 25px;
             margin-bottom: 22px;
-            box-shadow: 0 5px 20px rgba(27, 79, 61, 0.05);
+            box-shadow: 0 4px 18px rgba(0, 0, 0, .05);
         }
 
-        .cartao h2 {
-            margin: 0 0 10px;
-            font-size: 23px;
-        }
-
-        .descricao {
-            color: #60736b;
-            line-height: 1.65;
+        .painel h2 {
+            color: #087f8c;
             margin-top: 0;
         }
 
-        .grade-formulario {
+        .descricao {
+            color: #5f6f75;
+            line-height: 1.6;
+        }
+
+        .grade {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
-            gap: 18px;
+            gap: 20px;
         }
 
         .campo {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
+            margin-bottom: 18px;
         }
 
         .campo label,
         .rotulo {
+            display: block;
+            margin-bottom: 8px;
             font-weight: bold;
-            font-size: 14px;
         }
 
         input,
-        select,
-        textarea {
+        select {
             width: 100%;
-            padding: 12px 13px;
-            border: 1px solid #cbdad2;
-            border-radius: 10px;
-            font: inherit;
-            background: white;
-            color: #263b35;
+            min-height: 44px;
+            padding: 10px 12px;
+            border: 1px solid #cbd5da;
+            border-radius: 8px;
+            background: #fff;
+            color: #263238;
+            font-size: 16px;
         }
 
         input:focus,
-        select:focus,
-        textarea:focus {
-            outline: 2px solid #8ad2bb;
-            border-color: var(--verde);
-        }
-
-        .campo-completo {
-            grid-column: 1 / -1;
-        }
-
-        .pergunta-gravidez {
-            margin-top: 20px;
-            padding: 18px;
-            border-radius: 13px;
-            border: 1px solid #efc9d8;
-            background: #fff7fa;
+        select:focus {
+            outline: 2px solid #8ad3d9;
+            border-color: #087f8c;
         }
 
         .opcoes {
             display: flex;
             flex-wrap: wrap;
-            gap: 18px;
-            margin-top: 13px;
+            gap: 20px;
+            align-items: center;
         }
 
-        .opcao {
+        .opcoes label {
             display: inline-flex;
             align-items: center;
             gap: 8px;
@@ -388,219 +425,211 @@ $imc = calcularIMC($peso, $altura);
             cursor: pointer;
         }
 
-        .opcao input {
-            width: auto;
-            accent-color: var(--rosa);
-        }
-
-        .gestantes {
-            border: 1px solid #edc2d3;
-            border-radius: 18px;
-            overflow: hidden;
-            margin-top: 22px;
-            background: white;
-        }
-
-        .gestantes-cabecalho {
-            padding: 22px;
-            color: #77304e;
-            background: linear-gradient(135deg, #ffe8f0, #fff5f8);
-        }
-
-        .gestantes-cabecalho h2 {
-            margin: 0 0 8px;
-            font-size: 23px;
-        }
-
-        .gestantes-cabecalho p {
-            margin: 0;
-            line-height: 1.6;
-        }
-
-        .gestantes-conteudo {
-            padding: 22px;
-        }
-
-        .aviso {
-            border-radius: 10px;
-            padding: 14px;
-            line-height: 1.6;
-            background: #fff8e7;
-            color: #73531a;
-            margin: 0 0 18px;
-        }
-
-        .botoes {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            margin-top: 22px;
+        .opcoes input {
+            width: 18px;
+            min-height: 18px;
+            height: 18px;
         }
 
         .botao {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            padding: 12px 18px;
+            display: inline-block;
             border: 0;
-            border-radius: 10px;
-            text-decoration: none;
-            font-size: 15px;
+            border-radius: 8px;
+            padding: 13px 20px;
+            background: #087f8c;
+            color: #fff;
             font-weight: bold;
+            font-size: 16px;
+            text-decoration: none;
             cursor: pointer;
         }
 
-        .botao-principal {
-            background: var(--verde);
-            color: white;
-        }
-
-        .botao-principal:hover {
-            background: var(--verde-escuro);
-        }
-
-        .botao-secundario {
-            background: #eaf4ef;
-            color: #176b53;
+        .botao:hover {
+            background: #066a75;
         }
 
         .mensagem {
-            padding: 14px 16px;
+            padding: 13px 16px;
             margin-bottom: 20px;
-            border-radius: 10px;
+            border-radius: 8px;
             line-height: 1.5;
         }
 
         .mensagem.sucesso {
-            background: #e4f7eb;
-            color: #176b3a;
+            background: #e8f7ed;
+            color: #176536;
         }
 
         .mensagem.erro {
             background: #fff0f0;
-            color: #9b2929;
+            color: #a32020;
         }
 
-        .imc-valor {
-            font-size: 28px;
-            color: var(--verde-escuro);
-            font-weight: bold;
-            margin: 10px 0;
+        .alerta {
+            padding: 12px 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            background: #fff5dd;
+            color: #76540b;
+            line-height: 1.5;
         }
 
-        .grade-recursos {
+        .gestacao {
+            padding: 20px;
+            border-radius: 10px;
+            background: #fff3f7;
+            border: 1px solid #f0cad9;
+            margin-top: 20px;
+        }
+
+        .gestacao h3 {
+            color: #9b3865;
+            margin-top: 0;
+        }
+
+        .atalhos {
             display: grid;
             grid-template-columns: repeat(2, minmax(0, 1fr));
             gap: 14px;
-            margin-top: 18px;
         }
 
-        .recurso {
+        .atalho {
             display: block;
             padding: 18px;
-            color: var(--texto);
-            background: #fbfdfc;
-            border: 1px solid var(--borda);
-            border-radius: 13px;
+            border: 1px solid #dce8eb;
+            border-radius: 10px;
+            color: #087f8c;
             text-decoration: none;
-            transition: transform .15s, border-color .15s;
+            font-weight: bold;
+            background: #fbfefe;
         }
 
-        .recurso:hover {
-            transform: translateY(-2px);
-            border-color: var(--verde);
+        .atalho:hover {
+            background: #edf8f9;
+            border-color: #087f8c;
         }
 
-        .recurso strong {
+        .atalho small {
             display: block;
-            color: var(--verde-escuro);
-            margin-bottom: 7px;
-            font-size: 16px;
-        }
-
-        .recurso span {
-            color: #60736b;
-            line-height: 1.5;
-            font-size: 14px;
+            margin-top: 7px;
+            color: #64757b;
+            font-weight: normal;
+            line-height: 1.4;
         }
 
         .nota {
-            color: #64766e;
-            font-size: 13px;
-            line-height: 1.6;
+            color: #64757b;
+            font-size: 14px;
+            line-height: 1.5;
         }
 
-        [hidden] {
-            display: none !important;
+        footer {
+            text-align: center;
+            padding: 20px;
+            color: #64757b;
         }
 
         @media (max-width: 650px) {
-            .grade-formulario,
-            .grade-recursos {
+            .grade,
+            .atalhos {
                 grid-template-columns: 1fr;
             }
 
-            .cartao {
-                padding: 18px;
+            .painel {
+                padding: 19px;
             }
 
-            .campo-completo {
-                grid-column: auto;
-            }
-
-            .botoes .botao {
-                width: 100%;
+            .cabecalho h1 {
+                font-size: 21px;
             }
         }
     </style>
 </head>
 
 <body>
+
 <header>
     <div class="cabecalho">
-        <h1>Informações de Saúde Geral</h1>
-        <p>Organize suas informações físicas e acompanhe seus dados de saúde.</p>
+        <h1>Saúde-Conecta</h1>
+
+        <a class="voltar" href="perfil_saude.php">
+            Voltar ao perfil de saúde
+        </a>
     </div>
 </header>
 
 <main>
-    <a class="voltar" href="perfil_saude.php">
-        &#8592; Voltar ao perfil de saúde
-    </a>
+    <section class="painel">
+        <h2>Informações de Saúde Geral</h2>
 
-    <?php if ($mensagem !== ''): ?>
-        <div class="mensagem <?= h($tipoMensagem) ?>" role="status">
-            <?= h($mensagem) ?>
-        </div>
-    <?php endif; ?>
-
-    <section class="cartao">
-        <h2>Dados físicos e informações de saúde</h2>
         <p class="descricao">
-            Preencha os dados abaixo e clique em salvar para registrar
-            as informações na sua conta.
+            Consulte e atualize suas informações pessoais de saúde.
+            Os dados desta página são associados à sua conta.
         </p>
 
+        <?php if ($sucesso !== ''): ?>
+            <div class="mensagem sucesso" role="status">
+                <?= escaparSaude($sucesso) ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($erro !== ''): ?>
+            <div class="mensagem erro" role="alert">
+                <?= escaparSaude($erro) ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if (!empty($camposAusentes)): ?>
+            <div class="alerta">
+                <strong>Atenção:</strong>
+                algumas informações ainda não estão disponíveis no banco:
+                <?= escaparSaude(implode(', ', $camposAusentes)) ?>.
+                Os campos ausentes não poderão ser salvos até que as
+                respectivas colunas sejam criadas.
+            </div>
+        <?php endif; ?>
+
         <form method="POST" action="">
-            <div class="grade-formulario">
+            <input
+                type="hidden"
+                name="csrf_token"
+                value="<?= escaparSaude($tokenCsrf) ?>"
+            >
+
+            <div class="grade">
                 <div class="campo">
                     <label for="sexo">Sexo</label>
-                    <select name="sexo" id="sexo" required>
+
+                    <select id="sexo" name="sexo" required>
                         <option value="">Selecione</option>
-                        <option value="Feminino"
-                            <?= $sexo === 'Feminino' ? 'selected' : '' ?>>
+
+                        <option
+                            value="Feminino"
+                            <?= $sexoAtual === 'Feminino' ? 'selected' : '' ?>
+                        >
                             Feminino
                         </option>
-                        <option value="Masculino"
-                            <?= $sexo === 'Masculino' ? 'selected' : '' ?>>
+
+                        <option
+                            value="Masculino"
+                            <?= $sexoAtual === 'Masculino' ? 'selected' : '' ?>
+                        >
                             Masculino
                         </option>
-                        <option value="Outro"
-                            <?= $sexo === 'Outro' ? 'selected' : '' ?>>
+
+                        <option
+                            value="Outro"
+                            <?= $sexoAtual === 'Outro' ? 'selected' : '' ?>
+                        >
                             Outro
                         </option>
-                        <option value="Prefiro não informar"
-                            <?= $sexo === 'Prefiro não informar' ? 'selected' : '' ?>>
+
+                        <option
+                            value="Prefiro não informar"
+                            <?= $sexoAtual === 'Prefiro não informar'
+                                ? 'selected'
+                                : '' ?>
+                        >
                             Prefiro não informar
                         </option>
                     </select>
@@ -608,18 +637,25 @@ $imc = calcularIMC($peso, $altura);
 
                 <div class="campo">
                     <label for="tipo_sanguineo">Tipo sanguíneo</label>
-                    <select name="tipo_sanguineo" id="tipo_sanguineo">
-                        <option value="">Selecione</option>
+
+                    <select id="tipo_sanguineo" name="tipo_sanguineo">
+                        <option value="">Não informado</option>
+
                         <?php
                         $tipos = [
-                            'A+', 'A-', 'B+', 'B-', 'AB+',
-                            'AB-', 'O+', 'O-', 'Não sei'
+                            'A+', 'A-', 'B+', 'B-',
+                            'AB+', 'AB-', 'O+', 'O-',
                         ];
-                        foreach ($tipos as $tipo):
                         ?>
-                            <option value="<?= h($tipo) ?>"
-                                <?= $tipoSanguineo === $tipo ? 'selected' : '' ?>>
-                                <?= h($tipo) ?>
+
+                        <?php foreach ($tipos as $tipo): ?>
+                            <option
+                                value="<?= escaparSaude($tipo) ?>"
+                                <?= ($dados['tipo_sanguineo'] ?? '') === $tipo
+                                    ? 'selected'
+                                    : '' ?>
+                            >
+                                <?= escaparSaude($tipo) ?>
                             </option>
                         <?php endforeach; ?>
                     </select>
@@ -627,249 +663,163 @@ $imc = calcularIMC($peso, $altura);
 
                 <div class="campo">
                     <label for="peso">Peso (kg)</label>
+
                     <input
-                        type="number"
-                        name="peso"
+                        type="text"
+                        inputmode="decimal"
                         id="peso"
-                        min="1"
-                        max="500"
-                        step="0.1"
-                        placeholder="Ex.: 65,5"
-                        value="<?= h($peso) ?>"
+                        name="peso"
+                        placeholder="Ex.: 70,5"
+                        value="<?= escaparSaude($dados['peso'] ?? '') ?>"
                     >
                 </div>
 
                 <div class="campo">
-                    <label for="altura">Altura (m ou cm)</label>
+                    <label for="altura">Altura (metros)</label>
+
                     <input
-                        type="number"
-                        name="altura"
+                        type="text"
+                        inputmode="decimal"
                         id="altura"
-                        min="0.5"
-                        max="250"
-                        step="0.01"
-                        placeholder="Ex.: 1,65 ou 165"
-                        value="<?= h($altura) ?>"
+                        name="altura"
+                        placeholder="Ex.: 1,75"
+                        value="<?= escaparSaude($dados['altura'] ?? '') ?>"
                     >
                 </div>
             </div>
 
-            <div
-                id="perguntaGravidez"
-                class="pergunta-gravidez"
-                <?= $sexo !== 'Feminino' ? 'hidden' : '' ?>
+            <section
+                class="gestacao"
+                id="areaGestante"
+                <?= $sexoAtual !== 'Feminino' ? 'hidden' : '' ?>
             >
-                <div class="rotulo">Está grávida?</div>
+                <h3>Área Exclusiva para Gestantes</h3>
+
                 <p class="descricao">
-                    Selecione “Sim” para abrir a área exclusiva para gestantes.
+                    Informe se você está grávida para que essa informação
+                    fique registrada no seu perfil de saúde.
                 </p>
 
+                <span class="rotulo">Está grávida?</span>
+
                 <div class="opcoes">
-                    <label class="opcao">
+                    <label>
                         <input
                             type="radio"
                             name="gestante"
                             value="1"
-                            <?= $gestante === 1 ? 'checked' : '' ?>
+                            <?= $gestanteAtual === 1 ? 'checked' : '' ?>
                         >
-                        Sim, estou grávida
+                        Sim
                     </label>
 
-                    <label class="opcao">
+                    <label>
                         <input
                             type="radio"
                             name="gestante"
                             value="0"
-                            <?= $gestante !== 1 ? 'checked' : '' ?>
+                            <?= $gestanteAtual !== 1 ? 'checked' : '' ?>
                         >
-                        Não estou grávida
+                        Não
                     </label>
                 </div>
-            </div>
 
-            <div
-                id="areaGestantes"
-                class="gestantes"
-                <?= ($sexo !== 'Feminino' || $gestante !== 1) ? 'hidden' : '' ?>
-            >
-                <div class="gestantes-cabecalho">
-                    <h2>♡ Área Exclusiva para Gestantes</h2>
-                    <p>
-                        Um espaço de orientação para ajudar você a organizar
-                        o acompanhamento da gestação.
-                    </p>
-                </div>
+                <p class="nota">
+                    Esta informação é fornecida por você e não substitui
+                    avaliação ou acompanhamento de um profissional de saúde.
+                </p>
+            </section>
 
-                <div class="gestantes-conteudo">
-                    <div class="aviso">
-                        <strong>Importante:</strong> mantenha o
-                        acompanhamento pré-natal com uma equipe de saúde.
-                        As informações desta área não substituem consultas,
-                        exames ou orientações profissionais.
-                    </div>
+            <p class="nota">
+                Confira as informações antes de salvar. Os campos de peso
+                e altura aceitam vírgula ou ponto decimal.
+            </p>
 
-                    <h3>Cuidados durante a gestação</h3>
-                    <ul>
-                        <li>Realize as consultas de pré-natal recomendadas.</li>
-                        <li>Mantenha os exames e as vacinas em dia conforme orientação profissional.</li>
-                        <li>Informe à equipe de saúde sobre alergias e reações a medicamentos ou vacinas.</li>
-                        <li>Procure atendimento de saúde se tiver sintomas preocupantes.</li>
-                    </ul>
-
-                    <div class="botoes">
-                        <a
-                            class="botao botao-secundario"
-                            href="../pages/saude.php?tipo=vacinacao"
-                        >
-                            Consultar cartão de vacinação
-                        </a>
-
-                        <a
-                            class="botao botao-secundario"
-                            href="../pages/saude.php?tipo=atestados"
-                        >
-                            Consultar atestados
-                        </a>
-                    </div>
-
-                    <p class="nota">
-                        Os links dependem das funcionalidades já implementadas
-                        na página saude.php. A área acima fornece orientações
-                        e atalhos; não registra consultas, exames ou dados
-                        obstétricos adicionais.
-                    </p>
-                </div>
-            </div>
-
-            <div class="botoes">
-                <button
-                    class="botao botao-principal"
-                    type="submit"
-                >
-                    Salvar informações
-                </button>
-
-                <a
-                    class="botao botao-secundario"
-                    href="perfil_saude.php"
-                >
-                    Voltar ao perfil
-                </a>
-            </div>
+            <button class="botao" type="submit">
+                Salvar informações
+            </button>
         </form>
     </section>
 
-    <section class="cartao">
-        <h2>Índice de Massa Corporal (IMC)</h2>
+    <section class="painel">
+        <h2>Outras informações médicas</h2>
+
         <p class="descricao">
-            Cálculo estimado com base no peso e na altura informados.
+            Acesse as demais áreas do seu perfil de saúde.
         </p>
 
-        <?php if ($imc !== null): ?>
-            <div class="imc-valor">
-                <?= number_format($imc, 1, ',', '.') ?>
-            </div>
-
-            <p>
-                Classificação de referência:
-                <strong><?= h(classificarIMC($imc)) ?></strong>
-            </p>
-        <?php else: ?>
-            <p>
-                Informe seu peso e sua altura acima para calcular o IMC.
-            </p>
-        <?php endif; ?>
-
-        <p class="nota">
-            O IMC é uma medida geral e não substitui avaliação profissional.
-            Durante a gestação, sua interpretação exige cuidados específicos
-            e não deve ser usada isoladamente para avaliar a saúde da gestante.
-        </p>
-    </section>
-
-    <section class="cartao">
-        <h2>Outras informações de saúde</h2>
-        <p class="descricao">
-            Acesse as áreas disponíveis para organizar seus registros médicos.
-        </p>
-
-        <div class="grade-recursos">
-            <a
-                class="recurso"
-                href="../pages/saude.php?tipo=vacinacao"
-            >
-                <strong>Cartão de vacinação</strong>
-                <span>Consultar a área de registros de vacinas.</span>
+        <div class="atalhos">
+            <a class="atalho" href="../pages/cartao_vacinacao.php">
+                Cartão de vacinação
+                <small>Consultar e gerenciar registros de vacinas.</small>
             </a>
 
-            <a
-                class="recurso"
-                href="../pages/saude.php?tipo=alergias"
-            >
-                <strong>Alergias</strong>
-                <span>Consultar a área de informações sobre alergias.</span>
+            <a class="atalho" href="../pages/alergias.php">
+                Alergias
+                <small>Consultar ou registrar alergias conhecidas.</small>
             </a>
 
-            <a
-                class="recurso"
-                href="../pages/saude.php?tipo=reacoes_vacinas"
-            >
-                <strong>Reações a vacinas</strong>
-                <span>Consultar a área de registros de reações.</span>
+            <a class="atalho" href="../pages/reacoes_vacinas.php">
+                Reações a vacinas
+                <small>Registrar histórico de reações a vacinas.</small>
             </a>
 
-            <a
-                class="recurso"
-                href="../pages/saude.php?tipo=doencas"
-            >
-                <strong>Histórico de doenças</strong>
-                <span>Consultar a área de histórico de doenças.</span>
+            <a class="atalho" href="../pages/historico_doencas.php">
+                Histórico de doenças
+                <small>Consultar ou registrar informações de saúde.</small>
             </a>
 
-            <a
-                class="recurso"
-                href="../pages/saude.php?tipo=atestados"
-            >
-                <strong>Atestados</strong>
-                <span>Consultar a área de atestados médicos.</span>
+            <a class="atalho" href="../pages/atestados.php">
+                Atestados
+                <small>Acessar a área de documentos médicos.</small>
+            </a>
+
+            <a class="atalho" href="../components/perfil_saude.php">
+                Perfil de saúde
+                <small>Voltar à página principal das suas informações médicas.</small>
             </a>
         </div>
+
+        <p class="nota">
+            Os endereços dos atalhos precisam corresponder aos arquivos
+            existentes no seu projeto. Se alguma página tiver outro nome,
+            ajuste o respectivo link.
+        </p>
     </section>
 </main>
 
+<footer>
+    Saúde-Conecta — Informações de saúde
+</footer>
+
 <script>
-(function () {
-    const sexo = document.getElementById('sexo');
-    const pergunta = document.getElementById('perguntaGravidez');
-    const area = document.getElementById('areaGestantes');
-    const opcoesGravidez = document.querySelectorAll(
-        'input[name="gestante"]'
-    );
+    const campoSexo = document.getElementById('sexo');
+    const areaGestante = document.getElementById('areaGestante');
 
-    function atualizarAreaGestantes() {
-        const feminino = sexo.value === 'Feminino';
+    function atualizarAreaGestante() {
+        const feminino = campoSexo.value === 'Feminino';
 
-        pergunta.hidden = !feminino;
+        areaGestante.hidden = !feminino;
 
-        const selecionada = document.querySelector(
-            'input[name="gestante"]:checked'
+        const opcoesGestante = areaGestante.querySelectorAll(
+            'input[name="gestante"]'
         );
 
-        const estaGravida = feminino &&
-            selecionada !== null &&
-            selecionada.value === '1';
+        opcoesGestante.forEach(function (opcao) {
+            opcao.disabled = !feminino;
+        });
 
-        area.hidden = !estaGravida;
+        if (!feminino) {
+            opcoesGestante.forEach(function (opcao) {
+                opcao.checked = opcao.value === '0';
+            });
+        }
     }
 
-    sexo.addEventListener('change', atualizarAreaGestantes);
+    campoSexo.addEventListener('change', atualizarAreaGestante);
 
-    opcoesGravidez.forEach(function (opcao) {
-        opcao.addEventListener('change', atualizarAreaGestantes);
-    });
-
-    atualizarAreaGestantes();
-})();
+    atualizarAreaGestante();
 </script>
+
 </body>
 </html>

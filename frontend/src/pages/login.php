@@ -1,13 +1,13 @@
-
 <?php
-session_start();
+declare(strict_types=1);
 
 $raiz = dirname(__DIR__, 3);
 
-require_once $raiz . '/backend/config/database.php';
-require_once $raiz . '/backend/models/Usuario.php';
+require_once $raiz . '/backend/config/seguranca.php';
 
-if (isset($_SESSION['usuario'])) {
+iniciarSessaoSegura();
+
+if (isset($_SESSION['usuario']['id'])) {
     header('Location: ../components/perfil_saude.php');
     exit;
 }
@@ -15,56 +15,94 @@ if (isset($_SESSION['usuario'])) {
 $erro = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $email = trim($_POST['email'] ?? '');
-    $senha = $_POST['senha'] ?? '';
+    $token = $_POST['csrf_login'] ?? '';
 
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL) || $senha === '') {
-        $erro = 'Informe um e-mail válido e sua senha.';
+    if (
+        !is_string($token) ||
+        empty($_SESSION['csrf_login']) ||
+        !hash_equals($_SESSION['csrf_login'], $token)
+    ) {
+        $erro = 'Formulário expirado. Atualize a página e tente novamente.';
     } else {
-        try {
-            $db = Database::getConnection();
+        $email = trim($_POST['email'] ?? '');
+        $senha = $_POST['senha'] ?? '';
 
-            // Busca o usuário pelo e-mail.
-            $sql = 'SELECT * FROM usuarios WHERE email = :email LIMIT 1';
-            $stmt = $db->prepare($sql);
-            $stmt->execute(['email' => $email]);
-            $usuario = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (
+            !filter_var($email, FILTER_VALIDATE_EMAIL) ||
+            $senha === ''
+        ) {
+            $erro = 'Informe um e-mail válido e sua senha.';
+        } else {
+            try {
+                $pdo = Database::getConnection();
 
-            // Detecta o campo de senha usado pelo projeto.
-            $hashSenha = $usuario['senha_hash']
-                ?? $usuario['senha']
-                ?? null;
+                $stmt = $pdo->prepare(
+                    'SELECT *
+                     FROM usuarios
+                     WHERE email = :email
+                     LIMIT 1'
+                );
 
-            if ($usuario && $hashSenha && password_verify($senha, $hashSenha)) {
-                session_regenerate_id(true);
+                $stmt->execute(['email' => $email]);
+                $usuario = $stmt->fetch();
 
-                $_SESSION['usuario'] = [
-                    'id' => $usuario['id'],
-                    'nome' => $usuario['nome_completo']
-                        ?? $usuario['nome']
-                        ?? 'Usuário',
-                    'email' => $usuario['email'],
-                    'tipo' => $usuario['tipo_usuario'] ?? 'usuario'
-                ];
+                $hashSenha = $usuario['senha_hash']
+                    ?? $usuario['senha']
+                    ?? null;
 
-                header('Location: ../components/perfil_saude.php');
-                exit;
+                if (
+                    $usuario &&
+                    $hashSenha &&
+                    password_verify($senha, $hashSenha)
+                ) {
+                    // Contas desativadas não podem entrar.
+                    if (
+                        array_key_exists('ativo', $usuario) &&
+                        (int) $usuario['ativo'] !== 1
+                    ) {
+                        $erro = 'Esta conta está desativada.';
+                    } else {
+                        session_regenerate_id(true);
+
+                        $_SESSION['usuario'] = [
+                            'id' => (int) $usuario['id'],
+                            'nome' => $usuario['nome_completo']
+                                ?? $usuario['nome']
+                                ?? 'Usuário',
+                            'email' => $usuario['email'],
+                            'tipo' => $usuario['tipo_usuario']
+                                ?? 'usuario',
+                        ];
+
+                        unset($_SESSION['csrf_login']);
+
+                        header('Location: ../components/perfil_saude.php');
+                        exit;
+                    }
+                } else {
+                    $erro = 'E-mail ou senha incorretos.';
+                }
+            } catch (Throwable $e) {
+                error_log($e->getMessage());
+                $erro = 'Não foi possível acessar sua conta. '
+                    . 'Verifique a conexão com o banco de dados.';
             }
-
-            $erro = 'E-mail ou senha incorretos.';
-        } catch (Throwable $e) {
-            error_log($e->getMessage());
-            $erro = 'Não foi possível acessar sua conta. Verifique a conexão com o banco de dados.';
         }
     }
 }
+
+if (empty($_SESSION['csrf_login'])) {
+    $_SESSION['csrf_login'] = bin2hex(random_bytes(32));
+}
+
+$csrfLogin = $_SESSION['csrf_login'];
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Entrar - Saúde-Conecta</title>
+    <title>Login - Saúde-Conecta</title>
 
     <style>
         * {
@@ -72,68 +110,50 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         body {
-            font-family: Arial, sans-serif;
-            background: #f0fdf4;
             margin: 0;
             min-height: 100vh;
-            display: grid;
-            place-items: center;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             padding: 20px;
+            font-family: Arial, sans-serif;
+            background: #f0f6f8;
         }
 
-        .card {
+        .login-container {
+            width: 100%;
+            max-width: 420px;
+            padding: 32px;
             background: #fff;
-            padding: 28px;
-            border-radius: 14px;
-            width: min(380px, 100%);
-            box-shadow: 0 4px 18px #0001;
+            border-radius: 16px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, .09);
         }
 
         h1 {
-            color: #047857;
             margin-top: 0;
+            color: #087f8c;
+            text-align: center;
+        }
+
+        .descricao {
+            margin-bottom: 24px;
+            color: #5b6870;
+            text-align: center;
         }
 
         label {
             display: block;
-            margin-top: 16px;
+            margin: 16px 0 7px;
             font-weight: bold;
+            color: #263238;
         }
 
         input {
             width: 100%;
             padding: 12px;
-            margin-top: 6px;
-            border: 1px solid #ccc;
-            border-radius: 7px;
+            border: 1px solid #cbd5da;
+            border-radius: 8px;
             font-size: 16px;
-        }
-
-        button {
-            width: 100%;
-            padding: 12px;
-            margin-top: 22px;
-            background: #047857;
-            color: white;
-            border: 0;
-            border-radius: 7px;
-            cursor: pointer;
-            font-size: 16px;
-        }
-
-        button:hover {
-            background: #065f46;
-        }
-
-        .erro {
-            color: #b91c1c;
-            background: #fef2f2;
-            padding: 10px;
-            border-radius: 7px;
-        }
-
-        a {
-            color: #047857;
         }
 
         .senha-container {
@@ -141,106 +161,173 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         .senha-container input {
-            padding-right: 45px;
+            padding-right: 46px;
         }
 
-        .mostrar-senha {
+        .alternar-senha {
             position: absolute;
-            right: 8px;
             top: 50%;
-            transform: translateY(-20%);
-            width: 34px;
-            height: 34px;
-            margin: 0;
-            padding: 5px;
+            right: 10px;
+            transform: translateY(-50%);
+            width: 30px;
+            height: 30px;
+            padding: 4px;
+            border: 0;
             background: transparent;
-            color: #475569;
-            border: none;
             cursor: pointer;
+            color: #50636b;
         }
 
-        .mostrar-senha svg {
+        .alternar-senha svg {
             width: 22px;
             height: 22px;
         }
+
+        .botao {
+            width: 100%;
+            margin-top: 24px;
+            padding: 13px;
+            border: 0;
+            border-radius: 8px;
+            background: #087f8c;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .botao:hover {
+            background: #066a75;
+        }
+
+        .links {
+            margin-top: 18px;
+            text-align: center;
+            line-height: 2;
+        }
+
+        a {
+            color: #087f8c;
+        }
+
+        .erro {
+            margin: 16px 0;
+            padding: 12px;
+            border-radius: 8px;
+            background: #fff0f0;
+            color: #a32020;
+        }
     </style>
 </head>
-
 <body>
-<main class="card">
-    <h1>Saúde-Conecta</h1>
-    <h2>Entrar na sua conta</h2>
+    <main class="login-container">
+        <h1>Saúde-Conecta</h1>
 
-    <?php if ($erro !== ''): ?>
-        <p class="erro">
-            <?= htmlspecialchars($erro, ENT_QUOTES, 'UTF-8') ?>
+        <p class="descricao">
+            Entre para acessar seu perfil de saúde.
         </p>
-    <?php endif; ?>
 
-    <form method="POST" action="">
-        <label for="email">E-mail</label>
-        <input
-            id="email"
-            name="email"
-            type="email"
-            autocomplete="email"
-            placeholder="seuemail@exemplo.com"
-            value="<?= htmlspecialchars($_POST['email'] ?? '', ENT_QUOTES, 'UTF-8') ?>"
-            required
-        >
+        <?php if ($erro !== ''): ?>
+            <div class="erro" role="alert">
+                <?= htmlspecialchars($erro, ENT_QUOTES, 'UTF-8') ?>
+            </div>
+        <?php endif; ?>
 
-        <label for="senha">Senha</label>
-        <div class="senha-container">
+        <form method="POST" action="">
             <input
-                id="senha"
-                name="senha"
-                type="password"
-                autocomplete="current-password"
+                type="hidden"
+                name="csrf_login"
+                value="<?= htmlspecialchars($csrfLogin, ENT_QUOTES, 'UTF-8') ?>"
+            >
+
+            <label for="email">E-mail</label>
+            <input
+                type="email"
+                id="email"
+                name="email"
+                autocomplete="username"
                 required
+                value="<?= htmlspecialchars(
+                    $_POST['email'] ?? '',
+                    ENT_QUOTES,
+                    'UTF-8'
+                ) ?>"
             >
 
-            <button
-                class="mostrar-senha"
-                type="button"
-                id="alternarSenha"
-                aria-label="Mostrar senha"
-                title="Mostrar ou ocultar senha"
-            >
-                <svg id="iconeOlho" viewBox="0 0 24 24"
-                     fill="none" stroke="currentColor"
-                     stroke-width="2" stroke-linecap="round"
-                     stroke-linejoin="round" aria-hidden="true">
-                    <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                </svg>
+            <label for="senha">Senha</label>
+
+            <div class="senha-container">
+                <input
+                    type="password"
+                    id="senha"
+                    name="senha"
+                    autocomplete="current-password"
+                    required
+                >
+
+                <button
+                    class="alternar-senha"
+                    type="button"
+                    id="alternarSenha"
+                    aria-label="Mostrar senha"
+                    aria-pressed="false"
+                >
+                    <svg
+                        id="iconeOlho"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                    >
+                        <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    </svg>
+                </button>
+            </div>
+
+            <button class="botao" type="submit">
+                Entrar
             </button>
+        </form>
+
+        <div class="links">
+            <a href="recuperar_senha.php">Esqueci minha senha</a>
+            <br>
+            <a href="cadastro.php">Criar uma conta</a>
         </div>
+    </main>
 
-        <button type="submit">Entrar</button>
-    </form>
+    <script>
+        const campoSenha = document.getElementById('senha');
+        const botaoSenha = document.getElementById('alternarSenha');
+        const iconeOlho = document.getElementById('iconeOlho');
 
-    <p><a href="recuperar_senha.php">Esqueci minha senha</a></p>
-    <p><a href="cadastro.php">Criar uma conta</a></p>
-</main>
+        botaoSenha.addEventListener('click', function () {
+            const mostrar = campoSenha.type === 'password';
 
-<script>
-const campoSenha = document.getElementById('senha');
-const alternarSenha = document.getElementById('alternarSenha');
-const iconeOlho = document.getElementById('iconeOlho');
+            campoSenha.type = mostrar ? 'text' : 'password';
 
-alternarSenha.addEventListener('click', function () {
-    const mostrar = campoSenha.type === 'password';
+            botaoSenha.setAttribute(
+                'aria-label',
+                mostrar ? 'Ocultar senha' : 'Mostrar senha'
+            );
 
-    campoSenha.type = mostrar ? 'text' : 'password';
-    alternarSenha.setAttribute(
-        'aria-label',
-        mostrar ? 'Ocultar senha' : 'Mostrar senha'
-    );
+            botaoSenha.setAttribute(
+                'aria-pressed',
+                mostrar ? 'true' : 'false'
+            );
 
-    iconeOlho.innerHTML = mostrar
-        ? '<path d="M3 3l18 18"/><path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/><path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a15.7 15.7 0 0 1-4 4.8"/><path d="M6.2 6.2C3.5 8.1 2 12 2 12s3.6 7 10 7a10.6 10.6 0 0 0 4-.8"/>'
-        : '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>';
-});
-</script>
+            iconeOlho.innerHTML = mostrar
+                ? '<path d="M3 3l18 18"/>' +
+                  '<path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"/>' +
+                  '<path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6.4 0 10 7 10 7a15 15 0 0 1-3.1 3.8"/>' +
+                  '<path d="M6.2 6.2C3.5 8 2 12 2 12s3.6 7 10 7a10 10 0 0 0 4-.8"/>'
+                : '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/>' +
+                  '<circle cx="12" cy="12" r="3"/>';
+        });
+    </script>
 </body>
 </html>

@@ -1,24 +1,41 @@
-
 <?php
 declare(strict_types=1);
 
-/**
- * Segurança e autorização do Saúde-Conecta.
- *
- * Inclua este arquivo nas páginas protegidas depois de iniciar
- * a sessão. Não confie somente no papel salvo no navegador.
- */
-
 require_once __DIR__ . '/database.php';
 
-function exigirLogin(): array
+/**
+ * Inicia a sessão com cookies protegidos.
+ */
+function iniciarSessaoSegura(): void
 {
-    if (session_status() !== PHP_SESSION_ACTIVE) {
-        session_start();
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        return;
     }
 
+    $https = isset($_SERVER['HTTPS'])
+        && $_SERVER['HTTPS'] !== ''
+        && strtolower((string) $_SERVER['HTTPS']) !== 'off';
+
+    session_set_cookie_params([
+        'lifetime' => 0,
+        'path' => '/',
+        'secure' => $https,
+        'httponly' => true,
+        'samesite' => 'Lax',
+    ]);
+
+    session_start();
+}
+
+/**
+ * Exige uma sessão autenticada.
+ */
+function exigirLogin(): array
+{
+    iniciarSessaoSegura();
+
     if (empty($_SESSION['usuario']['id'])) {
-        header('Location: ../../frontend/src/pages/login.php');
+        header('Location: /Saude-conecta/frontend/src/pages/login.php');
         exit;
     }
 
@@ -26,17 +43,17 @@ function exigirLogin(): array
 }
 
 /**
- * Consulta o papel atual diretamente no banco.
- *
- * IMPORTANTE:
- * A coluna "papel" precisa existir na tabela usuarios.
- * Os valores previstos são "titular", "medico" e "usuario".
- * O papel médico não deve ser escolhido pelo próprio usuário.
+ * Busca novamente o usuário no banco.
+ * Não confia apenas nos dados armazenados na sessão.
  */
-function obterUsuarioAutenticado(PDO $pdo): array
+function usuarioAtual(PDO $pdo): array
 {
     $sessao = exigirLogin();
-    $id = filter_var($sessao['id'] ?? null, FILTER_VALIDATE_INT);
+
+    $id = filter_var(
+        $sessao['id'] ?? null,
+        FILTER_VALIDATE_INT
+    );
 
     if (!$id || $id < 1) {
         http_response_code(403);
@@ -44,17 +61,18 @@ function obterUsuarioAutenticado(PDO $pdo): array
     }
 
     $stmt = $pdo->prepare(
-        'SELECT id, papel, ativo
+        'SELECT id, tipo_usuario, papel, ativo, medico_verificado
          FROM usuarios
          WHERE id = :id
          LIMIT 1'
     );
+
     $stmt->execute(['id' => $id]);
     $usuario = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (
         !$usuario ||
-        (int) ($usuario['ativo'] ?? 0) !== 1
+        (int) $usuario['ativo'] !== 1
     ) {
         http_response_code(403);
         exit('Conta indisponível.');
@@ -64,67 +82,121 @@ function obterUsuarioAutenticado(PDO $pdo): array
 }
 
 /**
- * Confirma que o titular pode acessar a própria conta.
+ * Para páginas que permitem ao usuário consultar
+ * e atualizar exclusivamente os próprios dados.
  */
-function exigirTitular(PDO $pdo): array
+function exigirDonoDaConta(PDO $pdo): array
 {
-    $usuario = obterUsuarioAutenticado($pdo);
-
-    if ($usuario['papel'] !== 'titular') {
-        http_response_code(403);
-        exit('Somente o titular pode realizar esta operação.');
-    }
-
-    return $usuario;
+    return usuarioAtual($pdo);
 }
 
 /**
- * Verifica se um médico tem autorização ativa para um paciente.
- * $acao aceita apenas "visualizar" ou "editar".
+ * Autoriza o acesso aos dados médicos de um paciente.
+ *
+ * Ação permitida: visualizar ou editar.
+ *
+ * O paciente pode acessar os próprios dados.
+ * Um profissional só pode acessar dados de terceiros
+ * se estiver verificado e tiver autorização ativa
+ * concedida pelo próprio paciente.
  */
 function exigirAcessoMedico(
     PDO $pdo,
     int $pacienteId,
     string $acao
 ): array {
-    if (!in_array($acao, ['visualizar', 'editar'], true)) {
+    if (
+        $pacienteId < 1 ||
+        !in_array($acao, ['visualizar', 'editar'], true)
+    ) {
         http_response_code(400);
-        exit('Operação inválida.');
+        exit('Solicitação inválida.');
     }
 
-    $medico = obterUsuarioAutenticado($pdo);
+    $usuario = usuarioAtual($pdo);
 
-    if ($medico['papel'] !== 'medico') {
+    // O paciente pode acessar os próprios dados.
+    if ((int) $usuario['id'] === $pacienteId) {
+        return $usuario;
+    }
+
+    // Somente profissionais verificados podem acessar terceiros.
+    if (
+        ($usuario['tipo_usuario'] ?? '') !== 'profissional' ||
+        (int) ($usuario['medico_verificado'] ?? 0) !== 1
+    ) {
         http_response_code(403);
-        exit('Acesso reservado a médicos verificados.');
+        exit('Acesso permitido somente a profissionais verificados e autorizados.');
     }
 
-    $coluna = $acao === 'editar'
+    $permissao = $acao === 'editar'
         ? 'pode_editar'
         : 'pode_visualizar';
 
-    // O nome da coluna é escolhido exclusivamente pelo servidor.
     $sql = "
         SELECT id
         FROM autorizacoes_medicas
         WHERE paciente_id = :paciente
-          AND medico_id = :medico
+          AND medico_id = :profissional
+          AND autorizado_por = :autorizador
           AND status = 'ativa'
           AND pode_visualizar = 1
-          AND {$coluna} = 1
+          AND {$permissao} = 1
         LIMIT 1
     ";
 
     $stmt = $pdo->prepare($sql);
+
     $stmt->execute([
         'paciente' => $pacienteId,
-        'medico' => (int) $medico['id']
+        'profissional' => (int) $usuario['id'],
+        'autorizador' => $pacienteId,
     ]);
 
-    if (!$stmt->fetch()) {
+    if (!$stmt->fetch(PDO::FETCH_ASSOC)) {
         http_response_code(403);
-        exit('Você não tem autorização para acessar estes dados médicos.');
+        exit('Você não possui autorização para esta operação médica.');
     }
 
-    return $medico;
+    return $usuario;
+}
+
+/**
+ * Gera ou recupera o token CSRF da sessão.
+ */
+function gerarTokenCsrf(): string
+{
+    iniciarSessaoSegura();
+
+    if (
+        !isset($_SESSION['csrf_token']) ||
+        !is_string($_SESSION['csrf_token'])
+    ) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+
+    return $_SESSION['csrf_token'];
+}
+
+/**
+ * Valida o token CSRF enviado pelo formulário.
+ */
+function validarTokenCsrf(?string $token): void
+{
+    iniciarSessaoSegura();
+
+    $armazenado = $_SESSION['csrf_token'] ?? '';
+
+    if (
+        !is_string($token) ||
+        !is_string($armazenado) ||
+        $armazenado === '' ||
+        !hash_equals($armazenado, $token)
+    ) {
+        http_response_code(403);
+        exit(
+            'Formulário expirado ou inválido. '
+            . 'Atualize a página e tente novamente.'
+        );
+    }
 }
