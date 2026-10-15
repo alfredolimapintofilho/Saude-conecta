@@ -17,6 +17,7 @@ function icone(string $nome): string
         'alergia' => '<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="M12 8v5M12 16h.01"/>',
         'doenca' => '<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="M12 8v8M8 12h8"/>',
         'atestado' => '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h8"/>',
+        'livro' => '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/>',
         'seta' => '<path d="M5 12h14M12 5l7 7-7 7"/>',
         'expandir' => '<path d="m7 10 5 5 5-5"/>'
     ];
@@ -363,6 +364,16 @@ function icone(string $nome): string
             color: #c54c7a;
         }
 
+        /* NOVA JANELA: Saúde de A a Z */
+        .saude-az .icone-janela {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .saude-az .abrir {
+            color: #2e7d32;
+        }
+
         footer {
             padding: 18px;
             background: #fff;
@@ -479,7 +490,6 @@ function icone(string $nome): string
             </summary>
 
             <div class="opcoes-medicas">
-
                 <a class="opcao-medica"
                    href="../pages/registros.php?tipo=vacina">
                     <span class="opcao-icone cor-vacina">
@@ -539,7 +549,6 @@ function icone(string $nome): string
                     </span>
                     <?= icone('seta') ?>
                 </a>
-
             </div>
         </details>
 
@@ -609,6 +618,24 @@ function icone(string $nome): string
 
             <span class="abrir">
                 Ver adoções <?= icone('seta') ?>
+            </span>
+        </a>
+
+        <!-- NOVA JANELA 6: Saúde de A a Z -->
+        <a class="janela saude-az janela-link" href="saude_a_z.php">
+            <span class="icone-janela">
+                <?= icone('livro') ?>
+            </span>
+
+            <h2>Saúde de A a Z</h2>
+
+            <p>
+                Pesquise informações sobre doenças, sintomas, prevenção,
+                vacinação e cuidados com a saúde em fontes oficiais.
+            </p>
+
+            <span class="abrir">
+                Explorar assuntos <?= icone('seta') ?>
             </span>
         </a>
 
