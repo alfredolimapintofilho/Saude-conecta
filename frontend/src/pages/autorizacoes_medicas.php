@@ -1,840 +1,540 @@
 <?php
-declare(strict_types=1);
-
 /*
-|--------------------------------------------------------------------------
-| Saúde-Conecta — Autorizações Médicas
-|--------------------------------------------------------------------------
-| Arquivo: frontend/src/components/autorizacoes_medicas.php
-|
-| O paciente pode:
-| - Consultar profissionais verificados;
-| - Conceder acesso aos próprios dados médicos;
-| - Definir permissão para visualizar e editar;
-| - Revogar autorizações concedidas anteriormente.
-|
-| Requer:
-| backend/config/seguranca.php
-| backend/config/database.php
-|--------------------------------------------------------------------------
-*/
+ * Saúde-Conecta — Autorizações médicas
+ * Salvar em: frontend/src/pages/autorizacoes_medicas.php
+ */
 
 require_once __DIR__ . '/../../../backend/config/seguranca.php';
+require_once __DIR__ . '/../../../backend/config/database.php';
+require_once __DIR__ . '/../../../backend/config/saude_seguranca.php';
 
 iniciarSessaoSegura();
+$usuario = exigirLogin();
+
+if (is_object($usuario)) {
+    $usuario = (array) $usuario;
+}
+
+$usuarioId = 0;
+foreach (['id', 'id_usuario', 'usuario_id'] as $campo) {
+    if (isset($usuario[$campo]) && is_numeric($usuario[$campo])) {
+        $usuarioId = (int) $usuario[$campo];
+        break;
+    }
+}
+
+$nomeUsuario = 'Usuário';
+foreach (['nomeCompleto', 'nome_completo', 'nome', 'name'] as $campo) {
+    if (!empty($usuario[$campo])) {
+        $nomeUsuario = (string) $usuario[$campo];
+        break;
+    }
+}
+
+if ($usuarioId <= 0) {
+    http_response_code(401);
+    exit('Sessão inválida. Faça login novamente.');
+}
 
 $pdo = Database::getConnection();
+saudePrepararSeguranca($pdo);
 
-/*
- * A página trabalha somente com a conta autenticada.
- * O paciente não pode escolher outro paciente pela URL ou formulário.
- */
-$usuario = exigirDonoDaConta($pdo);
-$pacienteId = (int) $usuario['id'];
+$csrfChave = 'csrf_autorizacoes';
+$csrf = saudeNovoCsrf($csrfChave);
 
-$erro = '';
-$sucesso = '';
+$mensagem = '';
+$tipoMensagem = '';
+$editando = null;
+$autorizacoes = [];
 
-/*
-|--------------------------------------------------------------------------
-| Proteção CSRF
-|--------------------------------------------------------------------------
-*/
+$campos = [
+    'titulo' => '',
+    'tipo' => '',
+    'data_emissao' => '',
+    'data_validade' => '',
+    'profissional' => '',
+    'instituicao' => '',
+    'descricao' => '',
+    'observacoes' => '',
+];
 
-$tokenCsrf = gerarTokenCsrf();
+try {
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS autorizacoes_medicas (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            usuario_id BIGINT UNSIGNED NOT NULL,
+            titulo VARCHAR(180) NOT NULL,
+            tipo VARCHAR(80) NULL,
+            data_emissao DATE NULL,
+            data_validade DATE NULL,
+            profissional VARCHAR(180) NULL,
+            instituicao VARCHAR(180) NULL,
+            descricao TEXT NULL,
+            observacoes TEXT NULL,
+            criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            atualizado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_aut_usuario (usuario_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
 
-/*
-|--------------------------------------------------------------------------
-| Funções auxiliares
-|--------------------------------------------------------------------------
-*/
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $token = (string) ($_POST['csrf_token'] ?? '');
 
-function escaparAutorizacao(mixed $valor): string
-{
-    return htmlspecialchars(
-        (string) ($valor ?? ''),
-        ENT_QUOTES,
-        'UTF-8'
-    );
-}
-
-/*
-|--------------------------------------------------------------------------
-| Processar formulários
-|--------------------------------------------------------------------------
-*/
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    try {
-        validarTokenCsrf($_POST['csrf_token'] ?? null);
+        if (!saudeValidarCsrf($csrf, $token)) {
+            throw new RuntimeException(
+                'Token de segurança inválido. Atualize a página e tente novamente.'
+            );
+        }
 
         $acao = (string) ($_POST['acao'] ?? '');
+        $id = filter_var($_POST['id'] ?? 0, FILTER_VALIDATE_INT);
+        if ($id === false || $id < 0) {
+            throw new RuntimeException('Identificador inválido.');
+        }
 
-        /*
-         * Conceder ou atualizar uma autorização.
-         */
-        if ($acao === 'autorizar') {
-            $profissionalId = filter_var(
-                $_POST['profissional_id'] ?? null,
-                FILTER_VALIDATE_INT
-            );
+        if ($acao === 'excluir') {
+            if ($id <= 0) {
+                throw new RuntimeException('Registro inválido.');
+            }
 
-            if (
-                !$profissionalId ||
-                $profissionalId < 1 ||
-                $profissionalId === $pacienteId
-            ) {
-                throw new InvalidArgumentException(
-                    'Selecione um profissional válido.'
+            $stmt = $pdo->prepare("
+                DELETE FROM autorizacoes_medicas
+                WHERE id = :id AND usuario_id = :uid
+            ");
+            $stmt->execute(['id' => $id, 'uid' => $usuarioId]);
+
+            if ($stmt->rowCount() !== 1) {
+                throw new RuntimeException(
+                    'Registro não encontrado ou sem autorização.'
                 );
             }
 
-            $podeEditar = isset($_POST['pode_editar'])
-                && (string) $_POST['pode_editar'] === '1'
-                    ? 1
-                    : 0;
+            saudeAuditar($pdo, $usuarioId, 'autorizacao', $id, 'excluir');
+            $mensagem = 'Autorização excluída com sucesso.';
+            $tipoMensagem = 'sucesso';
 
-            /*
-             * Confirma que a conta existe, está ativa,
-             * tem tipo profissional e foi verificada.
-             */
-            $stmtProfissional = $pdo->prepare(
-                "SELECT id
-                 FROM usuarios
-                 WHERE id = :id
-                   AND tipo_usuario = 'profissional'
-                   AND ativo = 1
-                   AND medico_verificado = 1
-                 LIMIT 1"
-            );
+        } elseif ($acao === 'salvar') {
+            foreach ($campos as $campo => $_v) {
+                $campos[$campo] = trim((string) ($_POST[$campo] ?? ''));
+            }
 
-            $stmtProfissional->execute([
-                'id' => $profissionalId,
-            ]);
-
-            if (!$stmtProfissional->fetch()) {
-                throw new InvalidArgumentException(
-                    'O profissional não está disponível ou '
-                    . 'ainda não foi verificado.'
+            if ($campos['titulo'] === '' || mb_strlen($campos['titulo']) > 180) {
+                throw new RuntimeException(
+                    'Informe o título da autorização (até 180 caracteres).'
                 );
             }
 
-            $pdo->beginTransaction();
+            if ($campos['data_emissao'] !== '' && !saudeDataValida($campos['data_emissao'])) {
+                throw new RuntimeException('Data de emissão inválida.');
+            }
 
-            /*
-             * Procura a autorização mais recente entre
-             * este paciente e o profissional escolhido.
-             */
-            $stmtExistente = $pdo->prepare(
-                "SELECT id
-                 FROM autorizacoes_medicas
-                 WHERE paciente_id = :paciente
-                   AND medico_id = :profissional
-                 ORDER BY id DESC
-                 LIMIT 1"
-            );
+            if ($campos['data_validade'] !== '' && !saudeDataValida($campos['data_validade'])) {
+                throw new RuntimeException('Data de validade inválida.');
+            }
 
-            $stmtExistente->execute([
-                'paciente' => $pacienteId,
-                'profissional' => $profissionalId,
-            ]);
+            foreach (['descricao', 'observacoes'] as $campoTexto) {
+                if (mb_strlen($campos[$campoTexto]) > 10000) {
+                    throw new RuntimeException(
+                        'Um campo de texto ultrapassou o limite de 10.000 caracteres.'
+                    );
+                }
+            }
 
-            $autorizacaoExistente = $stmtExistente->fetch(
-                PDO::FETCH_ASSOC
-            );
+            $dados = [
+                'titulo' => $campos['titulo'],
+                'tipo' => $campos['tipo'] !== '' ? $campos['tipo'] : null,
+                'data_emissao' => $campos['data_emissao'] !== '' ? $campos['data_emissao'] : null,
+                'data_validade' => $campos['data_validade'] !== '' ? $campos['data_validade'] : null,
+                'profissional' => $campos['profissional'] !== '' ? $campos['profissional'] : null,
+                'instituicao' => $campos['instituicao'] !== '' ? $campos['instituicao'] : null,
+                'descricao' => $campos['descricao'] !== '' ? $campos['descricao'] : null,
+                'observacoes' => $campos['observacoes'] !== '' ? $campos['observacoes'] : null,
+            ];
 
-            if ($autorizacaoExistente) {
-                /*
-                 * Reativa ou atualiza o registro mais recente.
-                 * O autorizador é sempre o próprio paciente.
-                 */
-                $stmtSalvar = $pdo->prepare(
-                    "UPDATE autorizacoes_medicas
-                     SET autorizado_por = :autorizador,
-                         pode_visualizar = 1,
-                         pode_editar = :pode_editar,
-                         status = 'ativa'
-                     WHERE id = :id
-                       AND paciente_id = :paciente"
-                );
+            if ($id > 0) {
+                $verifica = $pdo->prepare("
+                    SELECT id FROM autorizacoes_medicas
+                    WHERE id = :id AND usuario_id = :uid LIMIT 1
+                ");
+                $verifica->execute(['id' => $id, 'uid' => $usuarioId]);
 
-                $stmtSalvar->execute([
-                    'autorizador' => $pacienteId,
-                    'pode_editar' => $podeEditar,
-                    'id' => (int) $autorizacaoExistente['id'],
-                    'paciente' => $pacienteId,
-                ]);
+                if (!$verifica->fetchColumn()) {
+                    throw new RuntimeException(
+                        'Registro não encontrado ou sem autorização.'
+                    );
+                }
+
+                $stmt = $pdo->prepare("
+                    UPDATE autorizacoes_medicas SET
+                        titulo = :titulo,
+                        tipo = :tipo,
+                        data_emissao = :data_emissao,
+                        data_validade = :data_validade,
+                        profissional = :profissional,
+                        instituicao = :instituicao,
+                        descricao = :descricao,
+                        observacoes = :observacoes
+                    WHERE id = :id AND usuario_id = :uid
+                ");
+                $stmt->execute($dados + ['id' => $id, 'uid' => $usuarioId]);
+
+                saudeAuditar($pdo, $usuarioId, 'autorizacao', $id, 'editar');
+                $mensagem = 'Autorização atualizada com sucesso.';
             } else {
-                $stmtSalvar = $pdo->prepare(
-                    "INSERT INTO autorizacoes_medicas
-                        (
-                            paciente_id,
-                            medico_id,
-                            autorizado_por,
-                            pode_visualizar,
-                            pode_editar,
-                            status
-                        )
-                     VALUES
-                        (
-                            :paciente,
-                            :profissional,
-                            :autorizador,
-                            1,
-                            :pode_editar,
-                            'ativa'
-                        )"
-                );
+                $stmt = $pdo->prepare("
+                    INSERT INTO autorizacoes_medicas (
+                        usuario_id, titulo, tipo, data_emissao, data_validade,
+                        profissional, instituicao, descricao, observacoes
+                    ) VALUES (
+                        :uid, :titulo, :tipo, :data_emissao, :data_validade,
+                        :profissional, :instituicao, :descricao, :observacoes
+                    )
+                ");
+                $stmt->execute($dados + ['uid' => $usuarioId]);
+                $novoId = (int) $pdo->lastInsertId();
 
-                $stmtSalvar->execute([
-                    'paciente' => $pacienteId,
-                    'profissional' => $profissionalId,
-                    'autorizador' => $pacienteId,
-                    'pode_editar' => $podeEditar,
-                ]);
+                saudeAuditar($pdo, $usuarioId, 'autorizacao', $novoId, 'criar');
+                $mensagem = 'Autorização salva com sucesso.';
             }
 
-            $pdo->commit();
-
-            $sucesso = 'Autorização concedida com sucesso.';
-
-        /*
-         * Revogar uma autorização do próprio paciente.
-         */
-        } elseif ($acao === 'revogar') {
-            $autorizacaoId = filter_var(
-                $_POST['autorizacao_id'] ?? null,
-                FILTER_VALIDATE_INT
-            );
-
-            if (!$autorizacaoId || $autorizacaoId < 1) {
-                throw new InvalidArgumentException(
-                    'Autorização inválida.'
-                );
-            }
-
-            $stmtRevogar = $pdo->prepare(
-                "UPDATE autorizacoes_medicas
-                 SET status = 'revogada',
-                     pode_visualizar = 0,
-                     pode_editar = 0
-                 WHERE id = :id
-                   AND paciente_id = :paciente
-                   AND autorizado_por = :autorizador
-                   AND status IN ('ativa', 'pendente')"
-            );
-
-            $stmtRevogar->execute([
-                'id' => $autorizacaoId,
-                'paciente' => $pacienteId,
-                'autorizador' => $pacienteId,
-            ]);
-
-            if ($stmtRevogar->rowCount() < 1) {
-                throw new InvalidArgumentException(
-                    'A autorização não foi encontrada, '
-                    . 'já foi revogada ou não pertence a você.'
-                );
-            }
-
-            $sucesso = 'Autorização revogada com sucesso.';
-
+            $tipoMensagem = 'sucesso';
+            $campos = array_fill_keys(array_keys($campos), '');
         } else {
-            throw new InvalidArgumentException(
-                'Operação inválida.'
+            throw new RuntimeException('Ação inválida.');
+        }
+
+        $_SESSION[$csrfChave] = bin2hex(random_bytes(32));
+        $csrf = $_SESSION[$csrfChave];
+    }
+
+    if (isset($_GET['editar'])) {
+        $editarId = filter_var($_GET['editar'], FILTER_VALIDATE_INT);
+        if (!$editarId || $editarId <= 0) {
+            throw new RuntimeException('Identificador inválido.');
+        }
+
+        $stmt = $pdo->prepare("
+            SELECT * FROM autorizacoes_medicas
+            WHERE id = :id AND usuario_id = :uid LIMIT 1
+        ");
+        $stmt->execute(['id' => $editarId, 'uid' => $usuarioId]);
+        $editando = $stmt->fetch(PDO::FETCH_ASSOC);
+
+        if (!$editando) {
+            throw new RuntimeException(
+                'Registro não encontrado ou sem autorização.'
             );
         }
 
-        /*
-         * Impede o reenvio acidental do formulário ao atualizar.
-         */
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-
-        header(
-            'Location: autorizacoes_medicas.php?resultado='
-            . rawurlencode($sucesso)
-        );
-        exit;
-
-    } catch (InvalidArgumentException $e) {
-        if ($pdo->inTransaction()) {
-            $pdo->rollBack();
+        foreach ($campos as $campo => $_v) {
+            $campos[$campo] = (string) ($editando[$campo] ?? '');
         }
-
-        $erro = $e->getMessage();
-
-    } catch (Throwable $e) {
-        if ($pdo->inTransaction()) {
-            $pdo->rollBack();
-        }
-
-        error_log($e->getMessage());
-
-        $erro = 'Não foi possível concluir a operação. '
-            . 'Verifique o banco de dados e tente novamente.';
     }
-}
 
-/*
-|--------------------------------------------------------------------------
-| Mensagem após redirecionamento
-|--------------------------------------------------------------------------
-*/
+    $stmt = $pdo->prepare("
+        SELECT id, titulo, tipo, data_emissao, data_validade, profissional
+        FROM autorizacoes_medicas
+        WHERE usuario_id = :uid
+        ORDER BY id DESC
+    ");
+    $stmt->execute(['uid' => $usuarioId]);
+    $autorizacoes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-if (isset($_GET['resultado']) && is_string($_GET['resultado'])) {
-    $mensagemPermitida = 'Autorização concedida com sucesso.';
-    $mensagemRevogada = 'Autorização revogada com sucesso.';
-
-    if (in_array(
-        $_GET['resultado'],
-        [$mensagemPermitida, $mensagemRevogada],
-        true
-    )) {
-        $sucesso = $_GET['resultado'];
-    }
-}
-
-/*
-|--------------------------------------------------------------------------
-| Buscar profissionais disponíveis
-|--------------------------------------------------------------------------
-*/
-
-try {
-    $stmtProfissionais = $pdo->prepare(
-        "SELECT id, nome_completo
-         FROM usuarios
-         WHERE tipo_usuario = 'profissional'
-           AND ativo = 1
-           AND medico_verificado = 1
-           AND id <> :paciente
-         ORDER BY nome_completo ASC"
-    );
-
-    $stmtProfissionais->execute([
-        'paciente' => $pacienteId,
-    ]);
-
-    $profissionais = $stmtProfissionais->fetchAll(
-        PDO::FETCH_ASSOC
-    );
-
+} catch (RuntimeException $e) {
+    $mensagem = $e->getMessage();
+    $tipoMensagem = 'erro';
 } catch (Throwable $e) {
-    error_log($e->getMessage());
-
-    http_response_code(500);
-    exit(
-        'Não foi possível consultar os profissionais. '
-        . 'Verifique a estrutura da tabela usuarios.'
-    );
-}
-
-/*
-|--------------------------------------------------------------------------
-| Buscar autorizações deste paciente
-|--------------------------------------------------------------------------
-*/
-
-try {
-    $stmtAutorizacoes = $pdo->prepare(
-        "SELECT
-            a.id,
-            a.medico_id,
-            a.pode_visualizar,
-            a.pode_editar,
-            a.status,
-            a.criado_em,
-            u.nome_completo AS nome_profissional
-         FROM autorizacoes_medicas a
-         INNER JOIN usuarios u
-            ON u.id = a.medico_id
-         WHERE a.paciente_id = :paciente
-         ORDER BY a.id DESC"
-    );
-
-    $stmtAutorizacoes->execute([
-        'paciente' => $pacienteId,
-    ]);
-
-    $autorizacoes = $stmtAutorizacoes->fetchAll(
-        PDO::FETCH_ASSOC
-    );
-
-} catch (Throwable $e) {
-    error_log($e->getMessage());
-
-    http_response_code(500);
-    exit('Não foi possível carregar suas autorizações médicas.');
+    error_log('autorizacoes_medicas.php: ' . $e->getMessage());
+    $mensagem = 'Não foi possível concluir a operação. Verifique o banco de dados.';
+    $tipoMensagem = 'erro';
 }
 ?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-
-    <title>Autorizações Médicas - Saúde-Conecta</title>
-
-    <style>
-        * {
-            box-sizing: border-box;
-        }
-
-        body {
-            margin: 0;
-            background: #f2f7f8;
-            color: #263238;
-            font-family: Arial, Helvetica, sans-serif;
-        }
-
-        header {
-            background: #087f8c;
-            color: white;
-            padding: 22px;
-        }
-
-        .cabecalho,
-        main {
-            width: min(1050px, calc(100% - 32px));
-            margin: 0 auto;
-        }
-
-        .cabecalho {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 15px;
-            flex-wrap: wrap;
-        }
-
-        .cabecalho h1 {
-            margin: 0;
-            font-size: 23px;
-        }
-
-        .voltar {
-            padding: 10px 15px;
-            border-radius: 8px;
-            background: white;
-            color: #087f8c;
-            text-decoration: none;
-            font-weight: bold;
-        }
-
-        main {
-            padding: 28px 0 40px;
-        }
-
-        .painel {
-            padding: 24px;
-            margin-bottom: 22px;
-            background: white;
-            border-radius: 14px;
-            box-shadow: 0 4px 18px rgba(0, 0, 0, .05);
-        }
-
-        h2 {
-            margin-top: 0;
-            color: #087f8c;
-            font-size: 21px;
-        }
-
-        .descricao,
-        .nota {
-            color: #5f6f75;
-            line-height: 1.6;
-        }
-
-        .campo {
-            margin: 20px 0;
-        }
-
-        .campo label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: bold;
-        }
-
-        select {
-            width: 100%;
-            min-height: 45px;
-            padding: 10px;
-            border: 1px solid #cbd5da;
-            border-radius: 8px;
-            background: white;
-            font-size: 16px;
-        }
-
-        .permissao {
-            display: flex;
-            align-items: flex-start;
-            gap: 10px;
-            margin: 17px 0;
-            line-height: 1.5;
-        }
-
-        .permissao input {
-            margin-top: 4px;
-            width: 18px;
-            height: 18px;
-            flex-shrink: 0;
-        }
-
-        .botao {
-            border: 0;
-            border-radius: 8px;
-            padding: 12px 18px;
-            background: #087f8c;
-            color: white;
-            font-size: 15px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-
-        .botao:hover {
-            background: #066a75;
-        }
-
-        .botao-revogar {
-            background: #b42318;
-        }
-
-        .botao-revogar:hover {
-            background: #8f1c13;
-        }
-
-        .mensagem {
-            padding: 14px 16px;
-            margin-bottom: 20px;
-            border-radius: 8px;
-            line-height: 1.5;
-        }
-
-        .sucesso {
-            background: #e8f7ed;
-            color: #176536;
-        }
-
-        .erro {
-            background: #fff0f0;
-            color: #a32020;
-        }
-
-        .aviso {
-            padding: 14px;
-            margin-top: 18px;
-            border-radius: 8px;
-            background: #fff5dd;
-            color: #76540b;
-            line-height: 1.6;
-        }
-
-        .lista {
-            display: grid;
-            gap: 15px;
-        }
-
-        .autorizacao {
-            border: 1px solid #dce8eb;
-            border-radius: 10px;
-            padding: 18px;
-        }
-
-        .autorizacao h3 {
-            margin: 0 0 10px;
-            font-size: 18px;
-        }
-
-        .detalhes {
-            color: #5f6f75;
-            line-height: 1.7;
-            overflow-wrap: anywhere;
-        }
-
-        .status {
-            display: inline-block;
-            padding: 5px 9px;
-            border-radius: 6px;
-            font-size: 13px;
-            font-weight: bold;
-            background: #edf0f2;
-            color: #3f4b50;
-        }
-
-        .status-ativa {
-            background: #e8f7ed;
-            color: #176536;
-        }
-
-        .status-pendente {
-            background: #fff5dd;
-            color: #76540b;
-        }
-
-        .status-revogada {
-            background: #fff0f0;
-            color: #a32020;
-        }
-
-        .vazio {
-            padding: 20px;
-            border: 1px dashed #cbd5da;
-            border-radius: 10px;
-            color: #5f6f75;
-            line-height: 1.6;
-        }
-
-        footer {
-            padding: 20px;
-            text-align: center;
-            color: #64757b;
-        }
-
-        @media (max-width: 600px) {
-            .painel {
-                padding: 18px;
-            }
-
-            .cabecalho h1 {
-                font-size: 20px;
-            }
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Autorizações Médicas | Saúde-Conecta</title>
+<style>
+:root {
+    --cor: #087f8c;
+    --fundo: #f1f6fa;
+    --texto: #18394e;
+    --borda: #e3ebf1;
+    --cinza: #718493;
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    background: var(--fundo);
+    color: var(--texto);
+    font: 15px/1.55 Arial, sans-serif;
+}
+a { text-decoration: none; color: inherit; }
+.topo {
+    background: #fff;
+    border-bottom: 1px solid var(--borda);
+    padding: 16px max(18px, calc((100% - 1100px) / 2));
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.marca, .voltar { color: var(--cor); font-weight: 700; }
+main {
+    max-width: 1100px;
+    width: calc(100% - 30px);
+    margin: 26px auto 50px;
+}
+.capa {
+    background: linear-gradient(120deg, #075b78, #087f8c, #54c8bd);
+    padding: 28px;
+    border-radius: 18px;
+    color: #fff;
+}
+.capa h1 { margin: 7px 0; font-size: 32px; }
+.capa p { margin: 0; }
+.grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 18px;
+    margin-top: 18px;
+}
+.painel {
+    background: #fff;
+    border: 1px solid var(--borda);
+    border-radius: 15px;
+    padding: 21px;
+    min-width: 0;
+}
+.painel h2 { font-size: 19px; margin: 0 0 6px; }
+.sub { color: var(--cinza); font-size: 13px; margin: 0 0 18px; }
+.campo { margin-bottom: 13px; }
+label { display: block; font-weight: 700; font-size: 12px; margin-bottom: 5px; }
+input, select, textarea {
+    width: 100%;
+    padding: 11px;
+    border: 1px solid #d7e2e9;
+    border-radius: 8px;
+    font: inherit;
+    font-size: 13px;
+    background: #fff;
+    color: var(--texto);
+}
+textarea { min-height: 80px; resize: vertical; }
+.duas {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+.btn {
+    display: inline-block;
+    border: 0;
+    border-radius: 8px;
+    background: var(--cor);
+    color: #fff;
+    padding: 10px 14px;
+    font-weight: 700;
+    font-size: 12px;
+    cursor: pointer;
+}
+.sec { background: #eaf6f6; color: var(--cor); }
+.perigo { background: #fff0f0; color: #a13535; }
+.acoes {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-top: 10px;
+}
+.item {
+    padding: 14px;
+    border: 1px solid var(--borda);
+    border-radius: 11px;
+    background: #fbfdfe;
+    margin-bottom: 10px;
+}
+.item h3 { margin: 0; font-size: 16px; }
+.item p {
+    font-size: 12px;
+    color: var(--cinza);
+    margin: 5px 0;
+    overflow-wrap: anywhere;
+}
+.aviso {
+    padding: 12px;
+    border-radius: 9px;
+    margin: 16px 0;
+    font-size: 13px;
+}
+.sucesso { background: #effaf3; color: #246c43; }
+.erro { background: #fff0f0; color: #a13535; }
+.vazio {
+    padding: 18px;
+    border: 1px dashed var(--borda);
+    border-radius: 10px;
+    color: var(--cinza);
+    font-size: 13px;
+}
+footer {
+    text-align: center;
+    color: var(--cinza);
+    font-size: 12px;
+    padding: 22px;
+}
+@media (max-width: 720px) {
+    .grid { grid-template-columns: 1fr; }
+    .capa { padding: 22px; }
+}
+@media (max-width: 400px) {
+    .duas { grid-template-columns: 1fr; }
+}
+</style>
 </head>
-
 <body>
-
-<header>
-    <div class="cabecalho">
-        <h1>Saúde-Conecta</h1>
-
-        <a class="voltar" href="perfil_saude.php">
-            Voltar ao perfil
-        </a>
-    </div>
+<header class="topo">
+    <a class="marca" href="perfil_saude.php">Saúde-Conecta</a>
+    <a class="voltar" href="perfil_saude.php">← Voltar ao Perfil de Saúde</a>
 </header>
 
 <main>
-    <section class="painel">
-        <h2>Autorizar um profissional de saúde</h2>
+    <section class="capa">
+        <small>DOCUMENTOS E AUTORIZAÇÕES</small>
+        <h1>Autorizações Médicas</h1>
+        <p>Registre autorizações, liberações e documentos médicos vinculados à sua conta.</p>
+    </section>
 
-        <p class="descricao">
-            Escolha um profissional verificado para permitir o acesso
-            aos seus dados médicos. Você pode revogar essa autorização
-            posteriormente.
-        </p>
+    <p>
+        Olá, <strong><?= saudeH($nomeUsuario) ?></strong>.
+        Os registros ficam vinculados à sua conta autenticada.
+    </p>
 
-        <?php if ($sucesso !== ''): ?>
-            <div class="mensagem sucesso" role="status">
-                <?= escaparAutorizacao($sucesso) ?>
-            </div>
-        <?php endif; ?>
+    <?php if ($mensagem !== ''): ?>
+        <div class="aviso <?= saudeH($tipoMensagem) ?>" role="status">
+            <?= saudeH($mensagem) ?>
+        </div>
+    <?php endif; ?>
 
-        <?php if ($erro !== ''): ?>
-            <div class="mensagem erro" role="alert">
-                <?= escaparAutorizacao($erro) ?>
-            </div>
-        <?php endif; ?>
+    <div class="grid">
+        <section class="painel">
+            <h2><?= $editando ? 'Editar autorização' : 'Nova autorização' ?></h2>
+            <p class="sub">Preencha as informações do documento.</p>
 
-        <?php if (empty($profissionais)): ?>
-            <div class="vazio">
-                Nenhum profissional verificado está disponível para
-                autorização no momento. Os profissionais precisam estar
-                cadastrados, ativos e com a verificação confirmada.
-            </div>
-        <?php else: ?>
-            <form method="POST" action="">
-                <input
-                    type="hidden"
-                    name="csrf_token"
-                    value="<?= escaparAutorizacao($tokenCsrf) ?>"
-                >
-
-                <input type="hidden" name="acao" value="autorizar">
+            <form method="post" action="autorizacoes_medicas.php">
+                <input type="hidden" name="csrf_token" value="<?= saudeH($csrf) ?>">
+                <input type="hidden" name="acao" value="salvar">
+                <input type="hidden" name="id" value="<?= (int) ($editando['id'] ?? 0) ?>">
 
                 <div class="campo">
-                    <label for="profissional_id">
-                        Profissional de saúde
-                    </label>
-
-                    <select
-                        id="profissional_id"
-                        name="profissional_id"
-                        required
-                    >
-                        <option value="">Selecione um profissional</option>
-
-                        <?php foreach ($profissionais as $profissional): ?>
-                            <option
-                                value="<?= (int) $profissional['id'] ?>"
-                            >
-                                <?= escaparAutorizacao(
-                                    $profissional['nome_completo']
-                                ) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
+                    <label for="titulo">Título *</label>
+                    <input type="text" id="titulo" name="titulo" maxlength="180" required
+                           value="<?= saudeH($campos['titulo']) ?>"
+                           placeholder="Ex.: Autorização para procedimento">
                 </div>
 
-                <label class="permissao">
-                    <input
-                        type="checkbox"
-                        name="pode_editar"
-                        value="1"
-                    >
+                <div class="duas">
+                    <div class="campo">
+                        <label for="tipo">Tipo</label>
+                        <select id="tipo" name="tipo">
+                            <?php
+                            $tipos = [
+                                '' => 'Não informado',
+                                'Procedimento' => 'Procedimento',
+                                'Exame' => 'Exame',
+                                'Cirurgia' => 'Cirurgia',
+                                'Internação' => 'Internação',
+                                'Outro' => 'Outro',
+                            ];
+                            foreach ($tipos as $v => $r): ?>
+                                <option value="<?= saudeH($v) ?>"
+                                    <?= $campos['tipo'] === $v ? 'selected' : '' ?>>
+                                    <?= saudeH($r) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="campo">
+                        <label for="profissional">Profissional / CRM</label>
+                        <input type="text" id="profissional" name="profissional" maxlength="180"
+                               value="<?= saudeH($campos['profissional']) ?>">
+                    </div>
+                    <div class="campo">
+                        <label for="data_emissao">Data de emissão</label>
+                        <input type="date" id="data_emissao" name="data_emissao"
+                               max="<?= date('Y-m-d') ?>"
+                               value="<?= saudeH($campos['data_emissao']) ?>">
+                    </div>
+                    <div class="campo">
+                        <label for="data_validade">Validade</label>
+                        <input type="date" id="data_validade" name="data_validade"
+                               value="<?= saudeH($campos['data_validade']) ?>">
+                    </div>
+                </div>
 
-                    <span>
-                        <strong>Permitir edição dos dados médicos</strong>
-                        <br>
-                        <span class="nota">
-                            Se não marcar, o profissional poderá visualizar
-                            os dados autorizados, mas não editá-los.
-                        </span>
-                    </span>
-                </label>
+                <div class="campo">
+                    <label for="instituicao">Instituição / local</label>
+                    <input type="text" id="instituicao" name="instituicao" maxlength="180"
+                           value="<?= saudeH($campos['instituicao']) ?>">
+                </div>
+                <div class="campo">
+                    <label for="descricao">Descrição</label>
+                    <textarea id="descricao" name="descricao" maxlength="10000"><?= saudeH($campos['descricao']) ?></textarea>
+                </div>
+                <div class="campo">
+                    <label for="observacoes">Observações</label>
+                    <textarea id="observacoes" name="observacoes" maxlength="10000"><?= saudeH($campos['observacoes']) ?></textarea>
+                </div>
 
-                <button class="botao" type="submit">
-                    Conceder autorização
-                </button>
+                <div class="acoes">
+                    <button class="btn" type="submit">
+                        <?= $editando ? 'Salvar alterações' : 'Salvar autorização' ?>
+                    </button>
+                    <?php if ($editando): ?>
+                        <a class="btn sec" href="autorizacoes_medicas.php">Cancelar</a>
+                    <?php endif; ?>
+                </div>
             </form>
-        <?php endif; ?>
+        </section>
 
-        <div class="aviso">
-            <strong>Importante:</strong> conceda acesso apenas a
-            profissionais cuja identidade e vínculo profissional tenham
-            sido confirmados. A autorização desta página não substitui
-            as verificações de permissão em cada página médica.
-        </div>
-    </section>
+        <section class="painel">
+            <h2>Autorizações cadastradas</h2>
+            <p class="sub">Somente os registros da sua conta são exibidos.</p>
 
-    <section class="painel">
-        <h2>Minhas autorizações</h2>
-
-        <p class="descricao">
-            Consulte os acessos concedidos e revogue as permissões
-            que não deseja mais manter.
-        </p>
-
-        <?php if (empty($autorizacoes)): ?>
-            <div class="vazio">
-                Você ainda não possui autorizações médicas registradas.
-            </div>
-        <?php else: ?>
-            <div class="lista">
-                <?php foreach ($autorizacoes as $autorizacao): ?>
-                    <?php
-                    $status = (string) $autorizacao['status'];
-
-                    $classeStatus = match ($status) {
-                        'ativa' => 'status-ativa',
-                        'pendente' => 'status-pendente',
-                        'revogada' => 'status-revogada',
-                        default => '',
-                    };
-
-                    $nomeStatus = match ($status) {
-                        'ativa' => 'Ativa',
-                        'pendente' => 'Pendente',
-                        'revogada' => 'Revogada',
-                        default => 'Desconhecida',
-                    };
-                    ?>
-
-                    <article class="autorizacao">
-                        <h3>
-                            <?= escaparAutorizacao(
-                                $autorizacao['nome_profissional']
-                            ) ?>
-                        </h3>
-
+            <?php if (empty($autorizacoes)): ?>
+                <div class="vazio">Nenhuma autorização cadastrada ainda.</div>
+            <?php else: ?>
+                <?php foreach ($autorizacoes as $item): ?>
+                    <article class="item">
+                        <h3><?= saudeH($item['titulo']) ?></h3>
+                        <p>Tipo: <?= saudeH($item['tipo'] ?: 'Não informado') ?></p>
                         <p>
-                            <span class="status <?= $classeStatus ?>">
-                                <?= escaparAutorizacao($nomeStatus) ?>
-                            </span>
+                            Emissão: <?= saudeH($item['data_emissao'] ?: '—') ?>
+                            ·
+                            Validade: <?= saudeH($item['data_validade'] ?: '—') ?>
                         </p>
-
-                        <div class="detalhes">
-                            <div>
-                                Visualização:
-                                <strong>
-                                    <?= (int) $autorizacao['pode_visualizar'] === 1
-                                        && $status === 'ativa'
-                                        ? 'Permitida'
-                                        : 'Não permitida' ?>
-                                </strong>
-                            </div>
-
-                            <div>
-                                Edição:
-                                <strong>
-                                    <?= (int) $autorizacao['pode_editar'] === 1
-                                        && $status === 'ativa'
-                                        ? 'Permitida'
-                                        : 'Não permitida' ?>
-                                </strong>
-                            </div>
-
-                            <div>
-                                Criada em:
-                                <?= escaparAutorizacao(
-                                    date(
-                                        'd/m/Y H:i',
-                                        strtotime(
-                                            (string) $autorizacao['criado_em']
-                                        )
-                                    )
-                                ) ?>
-                            </div>
-                        </div>
-
-                        <?php if (in_array(
-                            $status,
-                            ['ativa', 'pendente'],
-                            true
-                        ) && (int) $autorizacao['medico_id'] > 0): ?>
-                            <form
-                                method="POST"
-                                action=""
-                                onsubmit="return confirm(
-                                    'Tem certeza de que deseja revogar esta autorização?'
-                                );"
-                            >
-                                <input
-                                    type="hidden"
-                                    name="csrf_token"
-                                    value="<?= escaparAutorizacao($tokenCsrf) ?>"
-                                >
-
-                                <input
-                                    type="hidden"
-                                    name="acao"
-                                    value="revogar"
-                                >
-
-                                <input
-                                    type="hidden"
-                                    name="autorizacao_id"
-                                    value="<?= (int) $autorizacao['id'] ?>"
-                                >
-
-                                <button
-                                    class="botao botao-revogar"
-                                    type="submit"
-                                >
-                                    Revogar acesso
-                                </button>
+                        <p>Profissional: <?= saudeH($item['profissional'] ?: 'Não informado') ?></p>
+                        <div class="acoes">
+                            <a class="btn sec" href="autorizacoes_medicas.php?editar=<?= (int) $item['id'] ?>">Editar</a>
+                            <form method="post" action="autorizacoes_medicas.php"
+                                  onsubmit="return confirm('Excluir esta autorização?');">
+                                <input type="hidden" name="csrf_token" value="<?= saudeH($csrf) ?>">
+                                <input type="hidden" name="acao" value="excluir">
+                                <input type="hidden" name="id" value="<?= (int) $item['id'] ?>">
+                                <button class="btn perigo" type="submit">Excluir</button>
                             </form>
-                        <?php endif; ?>
+                        </div>
                     </article>
                 <?php endforeach; ?>
-            </div>
-        <?php endif; ?>
-    </section>
+            <?php endif; ?>
+        </section>
+    </div>
 </main>
 
 <footer>
-    Saúde-Conecta — Controle de autorizações médicas
+    Saúde-Conecta · Documentos informativos; não substituem originais oficiais.
 </footer>
-
 </body>
 </html>
