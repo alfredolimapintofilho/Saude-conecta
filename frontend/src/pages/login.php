@@ -1,14 +1,18 @@
 <?php
-declare(strict_types=1);
+/*
+ * Saúde-Conecta — Login (e-mail + senha)
+ * Salvar em: frontend/src/pages/login.php
+ */
 
 $raiz = dirname(__DIR__, 3);
 
 require_once $raiz . '/backend/config/seguranca.php';
+require_once $raiz . '/backend/config/database.php';
 
 iniciarSessaoSegura();
 
 if (isset($_SESSION['usuario']['id'])) {
-    header('Location: ../components/perfil_saude.php');
+    header('Location: perfil_saude.php');
     exit;
 }
 
@@ -69,6 +73,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             'nome' => $usuario['nome_completo']
                                 ?? $usuario['nome']
                                 ?? 'Usuário',
+                            'nome_completo' => $usuario['nome_completo']
+                                ?? $usuario['nome']
+                                ?? 'Usuário',
                             'email' => $usuario['email'],
                             'tipo' => $usuario['tipo_usuario']
                                 ?? 'usuario',
@@ -76,14 +83,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                         unset($_SESSION['csrf_login']);
 
-                        header('Location: ../components/perfil_saude.php');
+                        header('Location: perfil_saude.php');
                         exit;
                     }
                 } else {
                     $erro = 'E-mail ou senha incorretos.';
                 }
             } catch (Throwable $e) {
-                error_log($e->getMessage());
+                error_log('[Saúde-Conecta] Login: ' . $e->getMessage());
                 $erro = 'Não foi possível acessar sua conta. '
                     . 'Verifique a conexão com o banco de dados.';
             }

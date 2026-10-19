@@ -5,8 +5,12 @@ require_once __DIR__ . '/../../../backend/config/database.php';
 iniciarSessaoSegura();
 $usuario = exigirLogin();
 
+/* =========================================================
+   1. USUÁRIO AUTENTICADO
+========================================================= */
+
 if (is_array($usuario)) {
-    $usuarioId = (int) ($usuario['id'] ?? 0);
+    $usuarioId = (int) ($usuario['id'] ?? $usuario['id_usuario'] ?? 0);
     $nomeUsuario = '';
 
     foreach (['nomeCompleto', 'nome_completo', 'nome', 'name'] as $campo) {
@@ -16,14 +20,15 @@ if (is_array($usuario)) {
         }
     }
 } elseif (is_object($usuario)) {
-    $usuarioId = (int) ($usuario->id ?? 0);
+    $usuarioId = (int) ($usuario->id ?? $usuario->id_usuario ?? 0);
     $nomeUsuario = '';
 
     foreach (['nomeCompleto', 'nome_completo', 'nome', 'name'] as $campo) {
-        if (isset($usuario->$campo) && is_string($usuario->$campo)
-            && trim($usuario->$campo) !== '') {
+        if (isset($usuario->$campo) && is_string($usuario->$campo)) {
             $nomeUsuario = trim($usuario->$campo);
-            break;
+            if ($nomeUsuario !== '') {
+                break;
+            }
         }
     }
 } else {
@@ -39,6 +44,10 @@ if ($usuarioId <= 0) {
 if ($nomeUsuario === '') {
     $nomeUsuario = 'Meu perfil';
 }
+
+/* =========================================================
+   2. FUNÇÕES AUXILIARES
+========================================================= */
 
 function h($valor): string
 {
@@ -60,11 +69,14 @@ function icone(string $nome): string
         'livro' => '<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/>',
         'seta' => '<path d="M5 12h14M12 5l7 7-7 7"/>',
         'expandir' => '<path d="m7 10 5 5 5-5"/>',
-        'inicio' => '<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7h-6v7H4a1 1 0 0 1-1-1Z"/>',
         'usuario' => '<circle cx="12" cy="8" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/>',
         'editar' => '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/>',
         'salvar' => '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/>',
         'sair' => '<path d="M10 17l5-5-5-5M15 12H3"/><path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6"/>',
+        'crianca' => '<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M6 21v-1a6 6 0 0 1 12 0v1"/><path d="M9 10h.01M15 10h.01"/>',
+        'idoso' => '<circle cx="12" cy="7" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/><path d="M9 11c.5 1 1.5 1.5 3 1.5s2.5-.5 3-1.5"/>',
+        'mais' => '<path d="M12 5v14M5 12h14"/>',
+        'lixeira' => '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>',
     ];
 
     $conteudo = $icones[$nome] ?? $icones['seta'];
@@ -95,6 +107,10 @@ function idadeCalculada(?string $dataNascimento): ?int
     }
 }
 
+/* =========================================================
+   3. DADOS INICIAIS E TOKEN CSRF
+========================================================= */
+
 $mensagem = '';
 $tipoMensagem = '';
 $pdo = null;
@@ -116,6 +132,10 @@ if (!is_string($token) || strlen($token) < 32) {
     $_SESSION['csrf_perfil_fisico'] = $token;
 }
 
+/* =========================================================
+   4. BANCO DE DADOS E SALVAMENTO
+========================================================= */
+
 try {
     $pdo = Database::getConnection();
 
@@ -134,7 +154,8 @@ try {
                 ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (id),
             UNIQUE KEY uq_perfil_fisico_usuario (usuario_id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+          COLLATE=utf8mb4_unicode_ci
     ");
 
     $stmt = $pdo->prepare(
@@ -161,7 +182,10 @@ try {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tokenEnviado = $_POST['csrf_token'] ?? '';
 
-        if (!is_string($tokenEnviado) || !hash_equals($token, $tokenEnviado)) {
+        if (
+            !is_string($tokenEnviado) ||
+            !hash_equals($token, $tokenEnviado)
+        ) {
             throw new RuntimeException(
                 'A sessão do formulário expirou. Atualize a página e tente novamente.'
             );
@@ -171,17 +195,22 @@ try {
         $genero = trim((string) ($_POST['genero'] ?? ''));
 
         $alturaTexto = str_replace(
-            ',', '.', trim((string) ($_POST['altura'] ?? ''))
+            ',', '.',
+            trim((string) ($_POST['altura'] ?? ''))
         );
 
         $pesoTexto = str_replace(
-            ',', '.', trim((string) ($_POST['peso'] ?? ''))
+            ',', '.',
+            trim((string) ($_POST['peso'] ?? ''))
         );
 
-        $tipoSanguineo = trim((string) ($_POST['tipo_sanguineo'] ?? ''));
+        $tipoSanguineo = trim(
+            (string) ($_POST['tipo_sanguineo'] ?? '')
+        );
 
         $gestante = (
-            isset($_POST['gestante']) && $_POST['gestante'] === '1'
+            isset($_POST['gestante']) &&
+            $_POST['gestante'] === '1'
         ) ? 1 : 0;
 
         $ultimaMenstruacao = trim(
@@ -203,17 +232,26 @@ try {
             return $obj !== false && $obj->format('Y-m-d') === $data;
         };
 
-        if (!$dataValida($dataNascimento) || !$dataValida($ultimaMenstruacao)) {
+        if (
+            !$dataValida($dataNascimento) ||
+            !$dataValida($ultimaMenstruacao)
+        ) {
             throw new RuntimeException('Informe datas válidas.');
         }
 
-        if ($dataNascimento !== '' && $dataNascimento > date('Y-m-d')) {
+        if (
+            $dataNascimento !== '' &&
+            $dataNascimento > date('Y-m-d')
+        ) {
             throw new RuntimeException(
                 'A data de nascimento não pode ser futura.'
             );
         }
 
-        if ($ultimaMenstruacao !== '' && $ultimaMenstruacao > date('Y-m-d')) {
+        if (
+            $ultimaMenstruacao !== '' &&
+            $ultimaMenstruacao > date('Y-m-d')
+        ) {
             throw new RuntimeException(
                 'A data da última menstruação não pode ser futura.'
             );
@@ -232,9 +270,11 @@ try {
 
         if (
             $alturaTexto !== '' &&
-            (!is_numeric($alturaTexto) ||
+            (
+                !is_numeric($alturaTexto) ||
                 (float) $alturaTexto < 0.3 ||
-                (float) $alturaTexto > 2.8)
+                (float) $alturaTexto > 2.8
+            )
         ) {
             throw new RuntimeException(
                 'A altura deve ser informada em metros, entre 0,30 e 2,80.'
@@ -243,9 +283,11 @@ try {
 
         if (
             $pesoTexto !== '' &&
-            (!is_numeric($pesoTexto) ||
+            (
+                !is_numeric($pesoTexto) ||
                 (float) $pesoTexto < 1 ||
-                (float) $pesoTexto > 500)
+                (float) $pesoTexto > 500
+            )
         ) {
             throw new RuntimeException(
                 'O peso deve estar entre 1 e 500 kg.'
@@ -281,11 +323,15 @@ try {
 
         $stmt->execute([
             'usuario_id' => $usuarioId,
-            'data_nascimento' => $dataNascimento !== '' ? $dataNascimento : null,
+            'data_nascimento' => $dataNascimento !== ''
+                ? $dataNascimento : null,
             'genero' => $genero !== '' ? $genero : null,
-            'altura' => $alturaTexto !== '' ? (float) $alturaTexto : null,
-            'peso' => $pesoTexto !== '' ? (float) $pesoTexto : null,
-            'tipo_sanguineo' => $tipoSanguineo !== '' ? $tipoSanguineo : null,
+            'altura' => $alturaTexto !== ''
+                ? (float) $alturaTexto : null,
+            'peso' => $pesoTexto !== ''
+                ? (float) $pesoTexto : null,
+            'tipo_sanguineo' => $tipoSanguineo !== ''
+                ? $tipoSanguineo : null,
             'gestante' => $gestante,
             'ultima_menstruacao' => $ultimaMenstruacao !== ''
                 ? $ultimaMenstruacao : null,
@@ -317,6 +363,10 @@ try {
     $tipoMensagem = 'erro';
 }
 
+/* =========================================================
+   5. PREPARAÇÃO DOS DADOS PARA EXIBIÇÃO
+========================================================= */
+
 $generoFeminino = ($dados['genero'] ?? '') === 'Feminino';
 
 if (!$generoFeminino) {
@@ -329,11 +379,13 @@ $idade = idadeCalculada(
         ? (string) $dados['data_nascimento'] : null
 );
 
-$alturaExibida = $dados['altura'] !== '' && $dados['altura'] !== null
+$alturaExibida = $dados['altura'] !== '' &&
+    $dados['altura'] !== null
     ? number_format((float) $dados['altura'], 2, ',', '.') . ' m'
     : 'Não informada';
 
-$pesoExibido = $dados['peso'] !== '' && $dados['peso'] !== null
+$pesoExibido = $dados['peso'] !== '' &&
+    $dados['peso'] !== null
     ? number_format((float) $dados['peso'], 1, ',', '.') . ' kg'
     : 'Não informado';
 
@@ -394,11 +446,8 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             flex-shrink: 0;
         }
 
-        a:focus-visible,
-        button:focus-visible,
-        input:focus-visible,
-        select:focus-visible,
-        summary:focus-visible {
+        a:focus-visible, button:focus-visible,
+        input:focus-visible, select:focus-visible {
             outline: 3px solid #38b6bd;
             outline-offset: 3px;
         }
@@ -473,7 +522,6 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
         }
 
         .botao-sair svg { width: 17px; height: 17px; }
-        .botao-sair:hover { background: #fff0f0; }
 
         .pagina {
             width: min(1240px, calc(100% - 40px));
@@ -491,8 +539,7 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
                 linear-gradient(115deg,#075b78 0%,#087f8c 48%,#37b9b3 100%);
         }
 
-        .capa::before,
-        .capa::after {
+        .capa::before, .capa::after {
             content: "";
             position: absolute;
             border: 1px solid rgba(255,255,255,.17);
@@ -613,18 +660,8 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             background: #2eaa6d;
         }
 
-        /* Sem menu lateral: o conteúdo usa toda a largura disponível. */
-        .layout {
-            display: block;
-            width: 100%;
-            margin-top: 24px;
-        }
-
-        .conteudo {
-            width: 100%;
-            min-width: 0;
-        }
-
+        .layout { display: block; width: 100%; margin-top: 24px; }
+        .conteudo { width: 100%; min-width: 0; }
         .secao { margin-bottom: 24px; scroll-margin-top: 95px; }
 
         .secao-titulo {
@@ -694,17 +731,8 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             color: var(--verde);
         }
 
-        .painel-titulo h3 {
-            margin: 0;
-            font-size: 15px;
-            font-weight: 850;
-        }
-
-        .painel-titulo p {
-            margin: 3px 0 0;
-            color: var(--secundario);
-            font-size: 11px;
-        }
+        .painel-titulo h3 { margin: 0; font-size: 15px; font-weight: 850; }
+        .painel-titulo p { margin: 3px 0 0; color: var(--secundario); font-size: 11px; }
 
         .botao {
             display: inline-flex;
@@ -721,7 +749,6 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             font-size: 12px;
             font-weight: 800;
             cursor: pointer;
-            transition: background .2s,border-color .2s,transform .2s;
         }
 
         .botao svg { width: 17px; height: 17px; }
@@ -783,10 +810,8 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             background: #fcfefe;
         }
 
-        .formulario[hidden],
-        .gravidez[hidden],
-        #campo-menstruacao[hidden],
-        .dado[hidden] {
+        .formulario[hidden], .gravidez[hidden],
+        #campo-menstruacao[hidden], .dado[hidden] {
             display: none !important;
         }
 
@@ -814,8 +839,7 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             font-weight: 800;
         }
 
-        .campo input,
-        .campo select {
+        .campo input, .campo select {
             width: 100%;
             min-height: 45px;
             padding: 10px 12px;
@@ -825,12 +849,6 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             color: var(--texto);
             font: inherit;
             font-size: 13px;
-        }
-
-        .campo input:focus,
-        .campo select:focus {
-            border-color: var(--verde);
-            outline: 3px solid rgba(8,127,140,.12);
         }
 
         .campo small {
@@ -850,11 +868,7 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             background: #f0faf8;
         }
 
-        .gravidez-cabecalho {
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
-        }
+        .gravidez-cabecalho { display: flex; align-items: flex-start; gap: 12px; }
 
         .gravidez-cabecalho input {
             width: 19px;
@@ -864,10 +878,7 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             flex: 0 0 auto;
         }
 
-        .gravidez-cabecalho label {
-            margin: 0;
-            font-size: 13px;
-        }
+        .gravidez-cabecalho label { margin: 0; font-size: 13px; }
 
         .gravidez-cabecalho p {
             margin: 4px 0 0;
@@ -892,17 +903,8 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             font-size: 12px;
         }
 
-        .aviso.sucesso {
-            border-color: #bfe8cf;
-            background: #effaf3;
-            color: #246c43;
-        }
-
-        .aviso.erro {
-            border-color: #f0caca;
-            background: #fff4f4;
-            color: #a13535;
-        }
+        .aviso.sucesso { border-color: #bfe8cf; background: #effaf3; color: #246c43; }
+        .aviso.erro { border-color: #f0caca; background: #fff4f4; color: #a13535; }
 
         .grade-servicos {
             display: grid;
@@ -972,12 +974,51 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
         .autorizacoes .icone-janela { background: #eceaff; color: #6256b5; }
         .pets .icone-janela { background: #fff3dc; color: #ad791e; }
         .adocao .icone-janela { background: #ffebf1; color: #c54c7a; }
+        .crianca .icone-janela { background: #e8f4ff; color: #2a7abf; }
+        .idoso .icone-janela { background: #f3eef8; color: #7a4ea3; }
 
         .saude-az .abrir { color: #2e7d4b; }
         .mapa .abrir { color: #3477b8; }
         .autorizacoes .abrir { color: #6256b5; }
         .pets .abrir { color: #ad791e; }
         .adocao .abrir { color: #c54c7a; }
+        .crianca .abrir { color: #2a7abf; }
+        .idoso .abrir { color: #7a4ea3; }
+
+        .acoes-opcao {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-left: auto;
+        }
+
+        .btn-mini {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 6px 10px;
+            border-radius: 8px;
+            font-size: 10px;
+            font-weight: 800;
+            text-decoration: none;
+            border: 1px solid var(--borda);
+            background: #fff;
+            color: var(--texto);
+        }
+
+        .btn-mini svg { width: 13px; height: 13px; }
+
+        .btn-mini.ver { color: #087f8c; border-color: #c9e8e5; background: #f0faf8; }
+        .btn-mini.add { color: #2e7d4b; border-color: #c5e6cf; background: #effaf3; }
+        .btn-mini:hover { filter: brightness(0.97); }
+
+        .opcao-medica {
+            flex-wrap: wrap;
+        }
+
+        .opcao-medica .opcao-texto {
+            min-width: 120px;
+        }
 
         .janela-medica {
             overflow: hidden;
@@ -1007,12 +1048,7 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             gap: 8px;
         }
 
-        .titulo-medico h3 {
-            flex: 1;
-            margin: 0 0 7px;
-            font-size: 14px;
-            font-weight: 850;
-        }
+        .titulo-medico h3 { flex: 1; margin: 0 0 7px; font-size: 14px; font-weight: 850; }
 
         .seta-expandir {
             width: 18px;
@@ -1022,9 +1058,7 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             transition: transform .2s;
         }
 
-        .janela-medica[open] .seta-expandir {
-            transform: rotate(180deg);
-        }
+        .janela-medica[open] .seta-expandir { transform: rotate(180deg); }
 
         .opcoes-medicas {
             padding: 5px 13px 12px;
@@ -1055,24 +1089,9 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
         .opcao-icone svg { width: 18px; height: 18px; }
         .opcao-texto { min-width: 0; flex: 1; }
 
-        .opcao-texto strong {
-            display: block;
-            font-size: 11px;
-            font-weight: 850;
-        }
-
-        .opcao-texto small {
-            display: block;
-            margin-top: 2px;
-            color: var(--secundario);
-            font-size: 10px;
-        }
-
-        .opcao-medica > svg {
-            width: 15px;
-            height: 15px;
-            color: var(--verde);
-        }
+        .opcao-texto strong { display: block; font-size: 11px; font-weight: 850; }
+        .opcao-texto small { display: block; margin-top: 2px; color: var(--secundario); font-size: 10px; }
+        .opcao-medica > svg { width: 15px; height: 15px; color: var(--verde); }
 
         .cor-vacina { background: #e0f6f3; color: #087f8c; }
         .cor-alergia, .cor-reacao { background: #fff0e4; color: #b96827; }
@@ -1094,17 +1113,8 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             gap: 12px;
         }
 
-        .rodape-marca {
-            color: var(--verde);
-            font-size: 12px;
-            font-weight: 850;
-        }
-
-        .rodape p {
-            margin: 0;
-            color: var(--secundario);
-            font-size: 11px;
-        }
+        .rodape-marca { color: var(--verde); font-size: 12px; font-weight: 850; }
+        .rodape p { margin: 0; color: var(--secundario); font-size: 11px; }
 
         @media (max-width: 950px) {
             .menu-topo { gap: 12px; }
@@ -1114,44 +1124,18 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
         }
 
         @media (max-width: 700px) {
-            .topo-conteudo {
-                width: calc(100% - 26px);
-                min-height: 64px;
-            }
-
+            .topo-conteudo { width: calc(100% - 26px); min-height: 64px; }
             .menu-topo { display: none; }
-
-            .pagina {
-                width: calc(100% - 26px);
-                margin-top: 17px;
-            }
-
+            .pagina { width: calc(100% - 26px); margin-top: 17px; }
             .capa { min-height: 175px; }
             .capa-conteudo { padding: 24px 19px; }
             .capa h1 { font-size: 27px; }
             .capa p { max-width: 90%; font-size: 12px; }
-
-            .perfil-cabecalho {
-                min-height: 0;
-                padding: 17px;
-                gap: 13px;
-            }
-
-            .avatar {
-                width: 64px;
-                height: 64px;
-                flex-basis: 64px;
-                font-size: 24px;
-            }
-
+            .perfil-cabecalho { min-height: 0; padding: 17px; gap: 13px; }
+            .avatar { width: 64px; height: 64px; flex-basis: 64px; font-size: 24px; }
             .perfil-identificacao h2 { font-size: 17px; }
             .perfil-identificacao p { font-size: 11px; }
-
-            .layout {
-                width: 100%;
-                margin-top: 19px;
-            }
-
+            .layout { width: 100%; margin-top: 19px; }
             .secao-titulo h2 { font-size: 19px; }
             .secao-titulo p { font-size: 11px; }
             .painel-topo { padding: 17px; }
@@ -1169,11 +1153,7 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             .janela p { font-size: 10px; }
             .abrir { gap: 4px; font-size: 10px; }
             .contador { font-size: 9px; }
-
-            .rodape-conteudo {
-                flex-direction: column;
-                text-align: center;
-            }
+            .rodape-conteudo { flex-direction: column; text-align: center; }
         }
 
         @media (max-width: 400px) {
@@ -1249,12 +1229,13 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
         </div>
     </section>
 
-    <!-- O menu lateral foi removido. O conteúdo abaixo ocupa toda a largura. -->
     <div class="layout">
         <div class="conteudo">
+
             <section class="secao" id="informacoes-fisicas"
                      aria-label="Minhas informações físicas">
                 <div class="painel">
+
                     <?php if ($mensagem !== ''): ?>
                         <div class="aviso <?= h($tipoMensagem) ?>"
                              role="status" aria-live="polite">
@@ -1283,9 +1264,7 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
                     <div class="resumo-fisico" id="resumo-fisico">
                         <div class="dado">
                             <span>Idade</span>
-                            <strong>
-                                <?= $idade !== null ? h($idade . ' anos') : 'Não informada' ?>
-                            </strong>
+                            <strong><?= $idade !== null ? h($idade . ' anos') : 'Não informada' ?></strong>
                             <small>Calculada pela data de nascimento</small>
                         </div>
 
@@ -1316,9 +1295,7 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
                         <?php if ($generoFeminino): ?>
                             <div class="dado" id="resumo-gravidez">
                                 <span>Gravidez</span>
-                                <strong>
-                                    <?= (int) $dados['gestante'] === 1 ? 'Sim' : 'Não' ?>
-                                </strong>
+                                <strong><?= (int) $dados['gestante'] === 1 ? 'Sim' : 'Não' ?></strong>
                                 <small>Conforme sua declaração</small>
                             </div>
                         <?php endif; ?>
@@ -1349,11 +1326,8 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
                                 <select id="genero" name="genero">
                                     <option value="">Selecione</option>
                                     <?php foreach ([
-                                        'Feminino',
-                                        'Masculino',
-                                        'Não binário',
-                                        'Outro',
-                                        'Prefiro não informar'
+                                        'Feminino', 'Masculino', 'Não binário',
+                                        'Outro', 'Prefiro não informar'
                                     ] as $opcaoGenero): ?>
                                         <option value="<?= h($opcaoGenero) ?>"
                                             <?= $dados['genero'] === $opcaoGenero ? 'selected' : '' ?>>
@@ -1367,7 +1341,7 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
                                 <label for="altura">Altura (metros)</label>
                                 <input type="number" id="altura" name="altura"
                                        min="0.30" max="2.80" step="0.01"
-                                       placeholder="Ex.: 1,70"
+                                       placeholder="Ex.: 1.70"
                                        value="<?= h($dados['altura']) ?>">
                                 <small>Exemplo: 1,70 representa 1 metro e 70 centímetros.</small>
                             </div>
@@ -1376,7 +1350,7 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
                                 <label for="peso">Peso (kg)</label>
                                 <input type="number" id="peso" name="peso"
                                        min="1" max="500" step="0.1"
-                                       placeholder="Ex.: 65,5"
+                                       placeholder="Ex.: 65.5"
                                        value="<?= h($dados['peso']) ?>">
                             </div>
 
@@ -1405,9 +1379,8 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
                                     <div>
                                         <label for="gestante">Estou grávida</label>
                                         <p>
-                                            Esta opção é exibida quando o gênero selecionado
-                                            é Feminino. Você pode alterar essa informação
-                                            a qualquer momento.
+                                            Esta informação é opcional e pode ser alterada.
+                                            Não substitui avaliação profissional.
                                         </p>
                                     </div>
                                 </div>
@@ -1450,10 +1423,11 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
                         <h2 id="titulo-servicos">Serviços de saúde</h2>
                         <p>Escolha uma área para consultar ou gerenciar.</p>
                     </div>
-                    <span class="contador">6 áreas</span>
+                    <span class="contador">8 áreas</span>
                 </div>
 
                 <div class="grade-servicos">
+
                     <details class="janela janela-medica" id="informacoes-medicas">
                         <summary class="resumo-medico">
                             <span class="icone-janela"
@@ -1466,7 +1440,7 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
                                 <?= icone('expandir') ?>
                             </span>
 
-                            <p>Cartão de vacinação, alergias, doenças e atestados.</p>
+                            <p>Cartão de vacinação, alergias, doenças e atestados. Adicione, edite ou exclua registros.</p>
 
                             <span class="abrir">
                                 Ver opções médicas <?= icone('seta') ?>
@@ -1474,52 +1448,82 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
                         </summary>
 
                         <div class="opcoes-medicas">
-                            <a class="opcao-medica" href="../pages/registros.php?tipo=vacina">
+
+                            <div class="opcao-medica">
                                 <span class="opcao-icone cor-vacina"><?= icone('vacina') ?></span>
                                 <span class="opcao-texto">
                                     <strong>Cartão de Vacinação</strong>
-                                    <small>Consultar e cadastrar vacinas</small>
+                                    <small>Consultar, adicionar, editar ou excluir vacinas</small>
                                 </span>
-                                <?= icone('seta') ?>
-                            </a>
+                                <span class="acoes-opcao">
+                                    <a class="btn-mini ver" href="registros.php?tipo=vacina"><?= icone('seta') ?> Gerenciar</a>
+                                    <a class="btn-mini add" href="registros.php?tipo=vacina&acao=adicionar"><?= icone('mais') ?> Adicionar</a>
+                                </span>
+                            </div>
 
-                            <a class="opcao-medica" href="../pages/registros.php?tipo=alergia">
+                            <div class="opcao-medica">
                                 <span class="opcao-icone cor-alergia"><?= icone('alergia') ?></span>
                                 <span class="opcao-texto">
                                     <strong>Alergias</strong>
-                                    <small>Consultar e cadastrar alergias</small>
+                                    <small>Consultar, adicionar, editar ou excluir alergias</small>
                                 </span>
-                                <?= icone('seta') ?>
-                            </a>
+                                <span class="acoes-opcao">
+                                    <a class="btn-mini ver" href="registros.php?tipo=alergia"><?= icone('seta') ?> Gerenciar</a>
+                                    <a class="btn-mini add" href="registros.php?tipo=alergia&acao=adicionar"><?= icone('mais') ?> Adicionar</a>
+                                </span>
+                            </div>
 
-                            <a class="opcao-medica" href="../pages/registros.php?tipo=alergia_vacina">
+                            <div class="opcao-medica">
                                 <span class="opcao-icone cor-reacao"><?= icone('alergia') ?></span>
                                 <span class="opcao-texto">
                                     <strong>Reações a vacinas</strong>
-                                    <small>Registrar reações ou alergias</small>
+                                    <small>Consultar, adicionar, editar ou excluir reações</small>
                                 </span>
-                                <?= icone('seta') ?>
-                            </a>
+                                <span class="acoes-opcao">
+                                    <a class="btn-mini ver" href="registros.php?tipo=alergia_vacina"><?= icone('seta') ?> Gerenciar</a>
+                                    <a class="btn-mini add" href="registros.php?tipo=alergia_vacina&acao=adicionar"><?= icone('mais') ?> Adicionar</a>
+                                </span>
+                            </div>
 
-                            <a class="opcao-medica" href="../pages/registros.php?tipo=doenca">
+                            <div class="opcao-medica">
                                 <span class="opcao-icone cor-doenca"><?= icone('doenca') ?></span>
                                 <span class="opcao-texto">
                                     <strong>Histórico de doenças</strong>
-                                    <small>Consultar e cadastrar doenças</small>
+                                    <small>Consultar, adicionar, editar ou excluir doenças</small>
                                 </span>
-                                <?= icone('seta') ?>
-                            </a>
+                                <span class="acoes-opcao">
+                                    <a class="btn-mini ver" href="registros.php?tipo=doenca"><?= icone('seta') ?> Gerenciar</a>
+                                    <a class="btn-mini add" href="registros.php?tipo=doenca&acao=adicionar"><?= icone('mais') ?> Adicionar</a>
+                                </span>
+                            </div>
 
-                            <a class="opcao-medica" href="../pages/registros.php?tipo=atestado">
+                            <div class="opcao-medica">
                                 <span class="opcao-icone cor-atestado"><?= icone('atestado') ?></span>
                                 <span class="opcao-texto">
                                     <strong>Atestados</strong>
-                                    <small>Consultar e cadastrar atestados</small>
+                                    <small>Consultar, adicionar, editar ou excluir atestados</small>
                                 </span>
-                                <?= icone('seta') ?>
-                            </a>
+                                <span class="acoes-opcao">
+                                    <a class="btn-mini ver" href="registros.php?tipo=atestado"><?= icone('seta') ?> Gerenciar</a>
+                                    <a class="btn-mini add" href="registros.php?tipo=atestado&acao=adicionar"><?= icone('mais') ?> Adicionar</a>
+                                </span>
+                            </div>
                         </div>
                     </details>
+
+                    <a class="janela crianca" href="saude_crianca.php">
+                        <span class="icone-janela"><?= icone('crianca') ?></span>
+                        <h3>Saúde Criança</h3>
+                        <p>Acompanhamento infantil, vacinas, crescimento e cuidados pediátricos.</p>
+                        <span class="abrir">Acessar área infantil <?= icone('seta') ?></span>
+                    </a>
+
+                    <a class="janela idoso" href="saude_idosos.php">
+                        <span class="icone-janela"><?= icone('idoso') ?></span>
+                        <h3>Saúde Idosos</h3>
+                        <p>Cuidados com a terceira idade, prevenção, medicações e acompanhamento.</p>
+                        <span class="abrir">Acessar área do idoso <?= icone('seta') ?></span>
+                    </a>
 
                     <a class="janela saude-az" href="saude_a_z.php">
                         <span class="icone-janela"><?= icone('livro') ?></span>
@@ -1542,19 +1546,20 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
                         <span class="abrir">Gerenciar autorizações <?= icone('seta') ?></span>
                     </a>
 
-                    <a class="janela pets" href="../pages/pets.php">
+                    <a class="janela pets" href="pets.php">
                         <span class="icone-janela"><?= icone('pets') ?></span>
                         <h3>Meus Pets</h3>
                         <p>Acesse os cadastros e as informações dos seus animais.</p>
                         <span class="abrir">Acessar meus pets <?= icone('seta') ?></span>
                     </a>
 
-                    <a class="janela adocao" href="../pages/adocao_pets.php">
+                    <a class="janela adocao" href="adocao_pets.php">
                         <span class="icone-janela"><?= icone('adocao') ?></span>
                         <h3>Adoção de Animais</h3>
                         <p>Acesse a área de adoção de animais.</p>
                         <span class="abrir">Ver adoções <?= icone('seta') ?></span>
                     </a>
+
                 </div>
             </section>
         </div>
@@ -1583,7 +1588,8 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
     function abrirEdicao() {
         formulario.hidden = false;
         botaoEditar.setAttribute('aria-expanded', 'true');
-        botaoEditar.innerHTML = <?= json_encode(icone('editar') . ' Fechar edição') ?>;
+        botaoEditar.innerHTML =
+            <?= json_encode(icone('editar') . ' Fechar edição') ?>;
 
         atualizarCamposGravidez();
         document.getElementById('data_nascimento').focus();
@@ -1592,7 +1598,8 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
     function fecharEdicao() {
         formulario.hidden = true;
         botaoEditar.setAttribute('aria-expanded', 'false');
-        botaoEditar.innerHTML = <?= json_encode(icone('editar') . ' Editar') ?>;
+        botaoEditar.innerHTML =
+            <?= json_encode(icone('editar') . ' Editar') ?>;
     }
 
     botaoEditar.addEventListener('click', function () {
@@ -1606,11 +1613,11 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
     botaoCancelar.addEventListener('click', fecharEdicao);
 
     function atualizarCamposGravidez() {
-        const generoFeminino = campoGenero.value === 'Feminino';
+        const feminino = campoGenero.value === 'Feminino';
 
-        blocoGravidez.hidden = !generoFeminino;
+        blocoGravidez.hidden = !feminino;
 
-        if (!generoFeminino) {
+        if (!feminino) {
             checkboxGestante.checked = false;
             dataUltimaMenstruacao.value = '';
         }
@@ -1620,17 +1627,16 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
     }
 
     function atualizarCampoMenstruacao() {
-        const generoFeminino = campoGenero.value === 'Feminino';
-
         campoMenstruacao.hidden =
-            !generoFeminino || !checkboxGestante.checked;
+            campoGenero.value !== 'Feminino' ||
+            !checkboxGestante.checked;
     }
 
     function atualizarResumoGravidez() {
-        const generoFeminino = campoGenero.value === 'Feminino';
+        const feminino = campoGenero.value === 'Feminino';
         const resumoExistente = document.getElementById('resumo-gravidez');
 
-        if (!generoFeminino) {
+        if (!feminino) {
             if (resumoExistente) {
                 resumoExistente.remove();
             }
@@ -1643,7 +1649,6 @@ if (preg_match('/^\s*(\p{L})/u', $nomeUsuario, $resultado)) {
             resumo = document.createElement('div');
             resumo.className = 'dado';
             resumo.id = 'resumo-gravidez';
-
             resumo.innerHTML =
                 '<span>Gravidez</span>' +
                 '<strong></strong>' +

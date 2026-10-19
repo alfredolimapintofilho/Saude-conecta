@@ -1,636 +1,627 @@
 <?php
-session_start();
+/*
+ * Saúde-Conecta — Registros médicos (CRUD)
+ * Salvar em: frontend/src/pages/registros.php
+ */
 
-if (!isset($_SESSION['usuario'])) {
-    header('Location: login.php');
-    exit;
-}
-
+require_once __DIR__ . '/../../../backend/config/seguranca.php';
 require_once __DIR__ . '/../../../backend/config/database.php';
 
+iniciarSessaoSegura();
+$usuario = exigirLogin();
 $pdo = Database::getConnection();
 
-$usuario = $_SESSION['usuario'];
-$usuarioId = null;
-$nomeUsuario = 'Usuário';
+if (is_object($usuario)) {
+    $usuario = (array) $usuario;
+}
 
-if (is_array($usuario)) {
-    if (isset($usuario['id'])) {
-        $usuarioId = (int) $usuario['id'];
-    } elseif (isset($usuario['id_usuario'])) {
-        $usuarioId = (int) $usuario['id_usuario'];
+function h($valor): string
+{
+    return htmlspecialchars((string) ($valor ?? ''), ENT_QUOTES, 'UTF-8');
+}
+
+function obterIdUsuario(array $usuario): int
+{
+    foreach (['id', 'id_usuario', 'usuario_id'] as $campo) {
+        if (isset($usuario[$campo]) && is_numeric($usuario[$campo])) {
+            return (int) $usuario[$campo];
+        }
     }
-
-    $nomeUsuario = $usuario['nomeCompleto']
-        ?? $usuario['nome']
-        ?? $usuario['nome_completo']
-        ?? 'Usuário';
+    return 0;
 }
 
-if (!$usuarioId) {
-    session_destroy();
-    header('Location: login.php');
-    exit;
+function nomeUsuario(array $usuario): string
+{
+    foreach (['nomeCompleto', 'nome_completo', 'nome', 'name'] as $campo) {
+        if (!empty($usuario[$campo])) {
+            return (string) $usuario[$campo];
+        }
+    }
+    return 'Usuário';
 }
 
-$tiposPermitidos = [
-    'vacina',
-    'alergia',
-    'alergia_vacina',
-    'doenca',
-    'atestado'
+$idUsuario = obterIdUsuario($usuario);
+$nome = nomeUsuario($usuario);
+
+if ($idUsuario <= 0) {
+    http_response_code(401);
+    exit('Sessão inválida. Faça login novamente.');
+}
+
+/* =========================================================
+   CATEGORIAS E ESTRUTURA DAS TABELAS
+========================================================= */
+
+$categorias = [
+    'vacina' => [
+        'titulo' => 'Cartão de vacinação',
+        'descricao' => 'Gerencie seus registros de vacinação.',
+        'tabela' => 'vacinacoes',
+        'campos' => [
+            'nome_vacina' => ['label' => 'Nome da vacina', 'tipo' => 'text', 'obrigatorio' => true],
+            'data_aplicacao' => ['label' => 'Data de aplicação', 'tipo' => 'date', 'obrigatorio' => true],
+            'dose' => ['label' => 'Dose', 'tipo' => 'text', 'obrigatorio' => false, 'placeholder' => 'Ex.: 1ª dose, reforço'],
+            'local' => ['label' => 'Local de aplicação', 'tipo' => 'text', 'obrigatorio' => false],
+            'lote' => ['label' => 'Lote', 'tipo' => 'text', 'obrigatorio' => false],
+            'observacoes' => ['label' => 'Observações', 'tipo' => 'textarea', 'obrigatorio' => false],
+        ],
+    ],
+    'alergia' => [
+        'titulo' => 'Alergias',
+        'descricao' => 'Gerencie as alergias registradas no seu perfil.',
+        'tabela' => 'alergias',
+        'campos' => [
+            'substancia' => ['label' => 'Substância / agente', 'tipo' => 'text', 'obrigatorio' => true],
+            'tipo_reacao' => ['label' => 'Tipo de reação', 'tipo' => 'text', 'obrigatorio' => false, 'placeholder' => 'Ex.: cutânea, respiratória'],
+            'gravidade' => ['label' => 'Gravidade', 'tipo' => 'select', 'obrigatorio' => false, 'opcoes' => ['', 'Leve', 'Moderada', 'Grave']],
+            'observacoes' => ['label' => 'Observações', 'tipo' => 'textarea', 'obrigatorio' => false],
+        ],
+    ],
+    'alergia_vacina' => [
+        'titulo' => 'Reações a vacinas',
+        'descricao' => 'Gerencie reações ou alergias relacionadas a vacinas.',
+        'tabela' => 'reacoes_vacinas',
+        'campos' => [
+            'nome_vacina' => ['label' => 'Vacina', 'tipo' => 'text', 'obrigatorio' => true],
+            'data_reacao' => ['label' => 'Data da reação', 'tipo' => 'date', 'obrigatorio' => false],
+            'sintomas' => ['label' => 'Sintomas', 'tipo' => 'textarea', 'obrigatorio' => true],
+            'gravidade' => ['label' => 'Gravidade', 'tipo' => 'select', 'obrigatorio' => false, 'opcoes' => ['', 'Leve', 'Moderada', 'Grave']],
+            'observacoes' => ['label' => 'Observações', 'tipo' => 'textarea', 'obrigatorio' => false],
+        ],
+    ],
+    'doenca' => [
+        'titulo' => 'Histórico de doenças',
+        'descricao' => 'Gerencie as doenças registradas no seu histórico.',
+        'tabela' => 'historico_doencas',
+        'campos' => [
+            'nome_doenca' => ['label' => 'Nome da doença / condição', 'tipo' => 'text', 'obrigatorio' => true],
+            'data_diagnostico' => ['label' => 'Data do diagnóstico', 'tipo' => 'date', 'obrigatorio' => false],
+            'status' => ['label' => 'Status', 'tipo' => 'select', 'obrigatorio' => false, 'opcoes' => ['', 'Ativa', 'Em tratamento', 'Resolvida', 'Crônica']],
+            'observacoes' => ['label' => 'Observações', 'tipo' => 'textarea', 'obrigatorio' => false],
+        ],
+    ],
+    'atestado' => [
+        'titulo' => 'Atestados médicos',
+        'descricao' => 'Gerencie os atestados registrados na sua conta.',
+        'tabela' => 'atestados',
+        'campos' => [
+            'tipo_atestado' => ['label' => 'Tipo de atestado', 'tipo' => 'text', 'obrigatorio' => true, 'placeholder' => 'Ex.: médico, odontológico'],
+            'data_emissao' => ['label' => 'Data de emissão', 'tipo' => 'date', 'obrigatorio' => true],
+            'dias_afastamento' => ['label' => 'Dias de afastamento', 'tipo' => 'number', 'obrigatorio' => false],
+            'profissional' => ['label' => 'Profissional / CRM', 'tipo' => 'text', 'obrigatorio' => false],
+            'observacoes' => ['label' => 'Observações', 'tipo' => 'textarea', 'obrigatorio' => false],
+        ],
+    ],
 ];
 
-$tipo = $_GET['tipo'] ?? 'vacina';
-
-if (!in_array($tipo, $tiposPermitidos, true)) {
+$tipo = isset($_GET['tipo']) ? (string) $_GET['tipo'] : 'vacina';
+if (!isset($categorias[$tipo])) {
     $tipo = 'vacina';
 }
+$categoria = $categorias[$tipo];
+$tabela = $categoria['tabela'];
+$camposDef = $categoria['campos'];
 
-$nomes = [
-    'vacina' => 'Cartão de Vacinação',
-    'alergia' => 'Alergias',
-    'alergia_vacina' => 'Reações a Vacinas',
-    'doenca' => 'Histórico de Doenças',
-    'atestado' => 'Atestados'
-];
+$acao = isset($_GET['acao']) ? (string) $_GET['acao'] : 'listar';
+$idEdicao = isset($_GET['id']) ? (int) $_GET['id'] : 0;
 
-function escapar($valor): string
-{
-    return htmlspecialchars(
-        (string) ($valor ?? ''),
-        ENT_QUOTES,
-        'UTF-8'
-    );
-}
-
-function dataBr($data): string
-{
-    if (empty($data)) {
-        return '-';
-    }
-
-    try {
-        $obj = new DateTime((string) $data);
-        return $obj->format('d/m/Y');
-    } catch (Throwable $e) {
-        return '-';
-    }
-}
-
-/**
- * Obtém os nomes reais das colunas de uma tabela.
- */
-function obterColunas(PDO $pdo, string $tabela): array
-{
-    $tabelasPermitidas = [
-        'atestados',
-        'vacinacoes',
-        'alergias',
-        'alergias_vacinas',
-        'historico_doencas'
-    ];
-
-    if (!in_array($tabela, $tabelasPermitidas, true)) {
-        return [];
-    }
-
-    $stmt = $pdo->query("SHOW COLUMNS FROM `$tabela`");
-    $colunas = [];
-
-    foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $coluna) {
-        $colunas[] = $coluna['Field'];
-    }
-
-    return $colunas;
-}
-
-/**
- * Escolhe a primeira coluna existente entre os nomes conhecidos.
- */
-function escolherColuna(array $colunas, array $candidatas): ?string
-{
-    foreach ($candidatas as $candidata) {
-        if (in_array($candidata, $colunas, true)) {
-            return $candidata;
-        }
-    }
-
-    return null;
-}
-
+$mensagem = '';
+$tipoMensagem = '';
+$registroEdicao = null;
 $registros = [];
-$colunaDataAtestado = null;
-$colunaValidadeAtestado = null;
-$colunasAtestado = [];
+
+/* Token CSRF */
+$token = $_SESSION['csrf_registros'] ?? '';
+if (!is_string($token) || strlen($token) < 32) {
+    $token = bin2hex(random_bytes(32));
+    $_SESSION['csrf_registros'] = $token;
+}
+
+/* =========================================================
+   CRIA TABELAS SE NÃO EXISTIREM
+========================================================= */
 
 try {
-    if ($tipo === 'vacina') {
-        $sql = "
-            SELECT *
-            FROM vacinacoes
-            WHERE usuario_id = :usuario_id
-            ORDER BY data_aplicacao DESC, id DESC
-        ";
-    } elseif ($tipo === 'alergia') {
-        $sql = "
-            SELECT *
-            FROM alergias
-            WHERE usuario_id = :usuario_id
-            ORDER BY id DESC
-        ";
-    } elseif ($tipo === 'alergia_vacina') {
-        $sql = "
-            SELECT *
-            FROM alergias_vacinas
-            WHERE usuario_id = :usuario_id
-            ORDER BY data_reacao DESC, id DESC
-        ";
-    } elseif ($tipo === 'doenca') {
-        $sql = "
-            SELECT *
-            FROM historico_doencas
-            WHERE usuario_id = :usuario_id
-            ORDER BY data_diagnostico DESC, id DESC
-        ";
-    } else {
-        // Descobre as colunas existentes para não usar uma coluna inexistente.
-        $colunasAtestado = obterColunas($pdo, 'atestados');
+    $defs = [
+        'vacinacoes' => "
+            CREATE TABLE IF NOT EXISTS vacinacoes (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                usuario_id BIGINT UNSIGNED NOT NULL,
+                nome_vacina VARCHAR(180) NOT NULL,
+                data_aplicacao DATE NULL,
+                dose VARCHAR(80) NULL,
+                local VARCHAR(180) NULL,
+                lote VARCHAR(80) NULL,
+                observacoes TEXT NULL,
+                criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                KEY idx_vac_usuario (usuario_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ",
+        'alergias' => "
+            CREATE TABLE IF NOT EXISTS alergias (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                usuario_id BIGINT UNSIGNED NOT NULL,
+                substancia VARCHAR(180) NOT NULL,
+                tipo_reacao VARCHAR(120) NULL,
+                gravidade VARCHAR(40) NULL,
+                observacoes TEXT NULL,
+                criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                KEY idx_alerg_usuario (usuario_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ",
+        'reacoes_vacinas' => "
+            CREATE TABLE IF NOT EXISTS reacoes_vacinas (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                usuario_id BIGINT UNSIGNED NOT NULL,
+                nome_vacina VARCHAR(180) NOT NULL,
+                data_reacao DATE NULL,
+                sintomas TEXT NOT NULL,
+                gravidade VARCHAR(40) NULL,
+                observacoes TEXT NULL,
+                criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                KEY idx_reac_usuario (usuario_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ",
+        'historico_doencas' => "
+            CREATE TABLE IF NOT EXISTS historico_doencas (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                usuario_id BIGINT UNSIGNED NOT NULL,
+                nome_doenca VARCHAR(180) NOT NULL,
+                data_diagnostico DATE NULL,
+                status VARCHAR(40) NULL,
+                observacoes TEXT NULL,
+                criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                KEY idx_doenca_usuario (usuario_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ",
+        'atestados' => "
+            CREATE TABLE IF NOT EXISTS atestados (
+                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                usuario_id BIGINT UNSIGNED NOT NULL,
+                tipo_atestado VARCHAR(120) NOT NULL,
+                data_emissao DATE NULL,
+                dias_afastamento INT NULL,
+                profissional VARCHAR(180) NULL,
+                observacoes TEXT NULL,
+                criado_em TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                KEY idx_atest_usuario (usuario_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ",
+    ];
 
-        $colunaDataAtestado = escolherColuna(
-            $colunasAtestado,
-            [
-                'data_emissao',
-                'data_emissao_atestado',
-                'data_do_atestado',
-                'data',
-                'emissao',
-                'created_at',
-                'data_criacao'
-            ]
-        );
+    if (isset($defs[$tabela])) {
+        $pdo->exec($defs[$tabela]);
+    }
 
-        $colunaValidadeAtestado = escolherColuna(
-            $colunasAtestado,
-            [
-                'data_validade',
-                'validade',
-                'data_vencimento',
-                'data_fim'
-            ]
-        );
+    /* =========================================================
+       PROCESSAR POST (adicionar / editar / excluir)
+    ========================================================= */
 
-        $sql = "
-            SELECT *
-            FROM atestados
-            WHERE usuario_id = :usuario_id
-        ";
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        $tokenEnviado = $_POST['csrf_token'] ?? '';
+        if (!is_string($tokenEnviado) || !hash_equals($token, $tokenEnviado)) {
+            throw new RuntimeException('Sessão do formulário expirou. Atualize a página e tente novamente.');
+        }
 
-        if ($colunaDataAtestado !== null) {
-            // O nome só pode vir da lista de colunas retornada pelo banco.
-            $sql .= " ORDER BY `$colunaDataAtestado` DESC";
+        $acaoPost = $_POST['acao_form'] ?? '';
 
-            if (in_array('id', $colunasAtestado, true)) {
-                $sql .= ', id DESC';
+        // EXCLUIR
+        if ($acaoPost === 'excluir') {
+            $idExcluir = (int) ($_POST['id'] ?? 0);
+            if ($idExcluir <= 0) {
+                throw new RuntimeException('Registro inválido para exclusão.');
             }
-        } elseif (in_array('id', $colunasAtestado, true)) {
-            $sql .= ' ORDER BY id DESC';
+            $stmt = $pdo->prepare("DELETE FROM `{$tabela}` WHERE id = :id AND usuario_id = :uid LIMIT 1");
+            $stmt->execute(['id' => $idExcluir, 'uid' => $idUsuario]);
+            $mensagem = 'Registro excluído com sucesso.';
+            $tipoMensagem = 'sucesso';
+            $acao = 'listar';
+        }
+
+        // ADICIONAR OU EDITAR
+        if ($acaoPost === 'salvar') {
+            $idSalvar = (int) ($_POST['id'] ?? 0);
+            $dadosForm = [];
+
+            foreach ($camposDef as $campo => $meta) {
+                $valor = trim((string) ($_POST[$campo] ?? ''));
+
+                if (!empty($meta['obrigatorio']) && $valor === '') {
+                    throw new RuntimeException('Preencha o campo obrigatório: ' . $meta['label']);
+                }
+
+                if (($meta['tipo'] ?? '') === 'date' && $valor !== '') {
+                    $obj = DateTimeImmutable::createFromFormat('!Y-m-d', $valor);
+                    if (!$obj || $obj->format('Y-m-d') !== $valor) {
+                        throw new RuntimeException('Data inválida em: ' . $meta['label']);
+                    }
+                }
+
+                if (($meta['tipo'] ?? '') === 'number' && $valor !== '') {
+                    if (!is_numeric($valor)) {
+                        throw new RuntimeException('Valor numérico inválido em: ' . $meta['label']);
+                    }
+                    $valor = (int) $valor;
+                }
+
+                $dadosForm[$campo] = $valor === '' ? null : $valor;
+            }
+
+            if ($idSalvar > 0) {
+                $sets = [];
+                $params = ['id' => $idSalvar, 'uid' => $idUsuario];
+                foreach ($dadosForm as $c => $v) {
+                    $sets[] = "`{$c}` = :{$c}";
+                    $params[$c] = $v;
+                }
+                $sql = "UPDATE `{$tabela}` SET " . implode(', ', $sets) . " WHERE id = :id AND usuario_id = :uid LIMIT 1";
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($params);
+                $mensagem = 'Registro atualizado com sucesso.';
+            } else {
+                $cols = array_keys($dadosForm);
+                $cols[] = 'usuario_id';
+                $placeholders = array_map(function ($c) { return ':' . $c; }, $cols);
+                $params = $dadosForm;
+                $params['usuario_id'] = $idUsuario;
+
+                $sql = "INSERT INTO `{$tabela}` (`" . implode('`,`', $cols) . "`) VALUES (" . implode(',', $placeholders) . ")";
+                $stmt = $pdo->prepare($sql);
+                $stmt->execute($params);
+                $mensagem = 'Registro adicionado com sucesso.';
+            }
+
+            $tipoMensagem = 'sucesso';
+            $acao = 'listar';
+            $idEdicao = 0;
+
+            $token = bin2hex(random_bytes(32));
+            $_SESSION['csrf_registros'] = $token;
         }
     }
 
-    $stmt = $pdo->prepare($sql);
-    $stmt->execute([':usuario_id' => $usuarioId]);
+    /* Carregar registro para edição */
+    if ($acao === 'editar' && $idEdicao > 0) {
+        $stmt = $pdo->prepare("SELECT * FROM `{$tabela}` WHERE id = :id AND usuario_id = :uid LIMIT 1");
+        $stmt->execute(['id' => $idEdicao, 'uid' => $idUsuario]);
+        $registroEdicao = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$registroEdicao) {
+            $mensagem = 'Registro não encontrado.';
+            $tipoMensagem = 'erro';
+            $acao = 'listar';
+        }
+    }
+
+    if ($acao === 'adicionar') {
+        $registroEdicao = null;
+    }
+
+    /* Listar registros do usuário */
+    $stmt = $pdo->prepare("SELECT * FROM `{$tabela}` WHERE usuario_id = :uid ORDER BY id DESC LIMIT 200");
+    $stmt->execute(['uid' => $idUsuario]);
     $registros = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+} catch (RuntimeException $e) {
+    $mensagem = $e->getMessage();
+    $tipoMensagem = 'erro';
 } catch (Throwable $e) {
-    error_log('Erro em registros.php: ' . $e->getMessage());
-
-    http_response_code(500);
-
-    exit(
-        'Não foi possível consultar os registros. ' .
-        'Verifique a estrutura das tabelas e tente novamente.'
-    );
+    error_log('registros.php: ' . $e->getMessage());
+    $mensagem = 'Erro ao processar. Verifique a conexão com o banco de dados.';
+    $tipoMensagem = 'erro';
 }
-?>
 
+$mostrarFormulario = in_array($acao, ['adicionar', 'editar'], true);
+$urlPerfil = 'perfil_saude.php';
+$urlLista = 'registros.php?tipo=' . urlencode($tipo);
+?>
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title><?= escapar($nomes[$tipo]) ?> - Saúde-Conecta</title>
-
+    <title><?= h($categoria['titulo']) ?> | Saúde-Conecta</title>
     <style>
-        * {
-            box-sizing: border-box;
+        :root {
+            --verde: #087f68;
+            --verde-escuro: #075d4f;
+            --fundo: #f3f7f6;
+            --texto: #20312d;
+            --borda: #dce7e3;
+            --branco: #fff;
+            --secundario: #60716b;
         }
-
+        * { box-sizing: border-box; }
         body {
             margin: 0;
+            background: var(--fundo);
+            color: var(--texto);
             font-family: Arial, Helvetica, sans-serif;
-            background: #f1f5f9;
-            color: #1e293b;
         }
-
-        a {
+        header {
+            background: var(--branco);
+            border-bottom: 1px solid var(--borda);
+            padding: 18px 5%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+        .marca {
+            color: var(--verde);
+            font-size: 22px;
+            font-weight: 800;
             text-decoration: none;
         }
-
-        .topo {
-            background: linear-gradient(135deg, #0f766e, #0d9488);
-            color: white;
-            padding: 20px;
+        .usuario { color: #53655f; font-size: 14px; }
+        main { width: min(1100px, 92%); margin: 32px auto; }
+        .voltar {
+            display: inline-block;
+            color: var(--verde);
+            text-decoration: none;
+            margin-bottom: 20px;
+            font-weight: bold;
         }
-
-        .topo-conteudo {
-            max-width: 1200px;
-            margin: auto;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 15px;
-        }
-
-        .logo h1 {
-            margin: 0;
-            font-size: 25px;
-        }
-
-        .logo p {
-            margin: 5px 0 0;
-            font-size: 14px;
-            opacity: .9;
-        }
-
-        .container {
-            max-width: 1200px;
-            margin: 30px auto;
-            padding: 0 16px;
-        }
-
-        .card {
-            background: white;
+        .painel {
+            background: var(--branco);
+            border: 1px solid var(--borda);
             border-radius: 16px;
-            padding: 25px;
-            box-shadow: 0 4px 15px rgba(0,0,0,.07);
+            padding: 26px;
+            box-shadow: 0 5px 20px rgba(20, 55, 45, .04);
             margin-bottom: 20px;
         }
-
-        .cabecalho {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 15px;
-            flex-wrap: wrap;
+        h1 { margin: 0 0 10px; font-size: clamp(24px, 4vw, 32px); }
+        .descricao { color: var(--secundario); line-height: 1.6; margin-bottom: 20px; }
+        .aviso {
+            background: #f1f8f5;
+            border: 1px solid #cfe7dd;
+            padding: 14px 16px;
+            border-radius: 10px;
+            line-height: 1.6;
+            margin-bottom: 18px;
         }
-
-        h2 {
-            margin: 0;
-            color: #0f766e;
-        }
-
-        .subtitulo {
-            color: #64748b;
-            margin-top: 7px;
-        }
-
-        .botoes {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-
-        .btn {
-            display: inline-block;
-            padding: 10px 14px;
-            border-radius: 8px;
-            font-weight: bold;
-            border: none;
-            cursor: pointer;
-        }
-
-        .btn-principal {
-            background: #0f766e;
-            color: white;
-        }
-
-        .btn-perfil {
-            background: #e2e8f0;
-            color: #334155;
-        }
-
-        .btn-sair {
-            background: #dc2626;
-            color: white;
-        }
-
-        .tabela-container {
-            overflow-x: auto;
-            margin-top: 20px;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            min-width: 750px;
-        }
-
+        .aviso.erro { background: #fff5f2; border-color: #f1d2c8; }
+        .aviso.sucesso { background: #effaf3; border-color: #bfe8cf; color: #246c43; }
+        .tabela-container { width: 100%; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 14px; }
         th, td {
             padding: 12px;
-            border-bottom: 1px solid #e2e8f0;
+            border-bottom: 1px solid var(--borda);
             text-align: left;
             vertical-align: top;
         }
-
-        th {
-            background: #f8fafc;
-            color: #475569;
+        th { background: #edf6f2; color: var(--verde-escuro); }
+        .acoes-linha { display: flex; gap: 8px; flex-wrap: wrap; }
+        .btn {
+            display: inline-block;
+            padding: 10px 14px;
+            border-radius: 9px;
+            background: var(--verde);
+            color: white;
+            text-decoration: none;
+            font-weight: bold;
             font-size: 13px;
+            border: none;
+            cursor: pointer;
         }
-
-        td {
+        .btn.secundario { background: #e8f2ee; color: var(--verde-escuro); }
+        .btn.perigo { background: #c0392b; }
+        .btn.pequeno { padding: 7px 11px; font-size: 12px; }
+        .acoes { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 22px; }
+        .campo { margin-bottom: 16px; }
+        .campo label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: bold;
+            font-size: 13px;
+            color: #385466;
+        }
+        .campo input, .campo select, .campo textarea {
+            width: 100%;
+            padding: 11px 12px;
+            border: 1px solid #dce7ed;
+            border-radius: 10px;
+            font: inherit;
             font-size: 14px;
         }
-
-        .acoes {
-            white-space: nowrap;
+        .campo textarea { min-height: 90px; resize: vertical; }
+        .obrigatorio { color: #c0392b; }
+        .grade-campos {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 12px 18px;
         }
-
-        .btn-editar, .btn-excluir {
-            display: inline-block;
-            padding: 7px 10px;
-            border-radius: 6px;
-            color: white;
-            font-weight: bold;
-            font-size: 12px;
+        .campo-largo { grid-column: 1 / -1; }
+        @media (max-width: 640px) {
+            .grade-campos { grid-template-columns: 1fr; }
+            .campo-largo { grid-column: auto; }
+            main { width: 94%; margin: 20px auto; }
+            .painel { padding: 18px; }
         }
-
-        .btn-editar {
-            background: #2563eb;
+        footer {
+            text-align: center;
+            padding: 28px 12px;
+            color: #708079;
+            font-size: 13px;
         }
-
-        .btn-excluir {
-            background: #dc2626;
-        }
-
         .vazio {
             text-align: center;
-            padding: 40px 20px;
-            color: #64748b;
-        }
-
-        .mensagem {
-            background: #dcfce7;
-            border: 1px solid #86efac;
-            color: #166534;
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-
-        .badge {
-            display: inline-block;
-            padding: 5px 8px;
-            border-radius: 20px;
-            background: #ccfbf1;
-            color: #115e59;
-            font-size: 12px;
-            font-weight: bold;
-        }
-
-        @media (max-width: 700px) {
-            .topo-conteudo {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-
-            .card {
-                padding: 18px;
-            }
+            padding: 28px 12px;
+            color: var(--secundario);
         }
     </style>
 </head>
-
 <body>
-
-<header class="topo">
-    <div class="topo-conteudo">
-        <div class="logo">
-            <h1>Saúde-Conecta</h1>
-            <p><?= escapar($nomeUsuario) ?></p>
-        </div>
-
-        <div class="botoes">
-            <a href="../components/perfil_saude.php"
-               class="btn btn-perfil">
-                Perfil de Saúde
-            </a>
-
-            <a href="../components/logout.php"
-               class="btn btn-sair"
-               onclick="return confirm('Deseja realmente sair da sua conta?');">
-                Sair
-            </a>
-        </div>
-    </div>
+<header>
+    <a class="marca" href="<?= h($urlPerfil) ?>">Saúde-Conecta</a>
+    <div class="usuario">Olá, <?= h($nome) ?></div>
 </header>
 
-<main class="container">
+<main>
+    <a class="voltar" href="<?= h($urlPerfil) ?>">&#8592; Voltar ao perfil de saúde</a>
 
-    <section class="card">
-        <div class="cabecalho">
-            <div>
-                <h2><?= escapar($nomes[$tipo]) ?></h2>
-                <p class="subtitulo">
-                    Gerencie as informações cadastradas na sua conta.
-                </p>
-            </div>
+    <section class="painel">
+        <h1><?= h($categoria['titulo']) ?></h1>
+        <p class="descricao"><?= h($categoria['descricao']) ?></p>
 
-            <div class="botoes">
-                <a href="cadastro.php?tipo=<?= urlencode($tipo) ?>"
-                   class="btn btn-principal">
-                    + Novo cadastro
-                </a>
-            </div>
-        </div>
-    </section>
+        <?php if ($mensagem !== ''): ?>
+            <div class="aviso <?= h($tipoMensagem) ?>" role="status"><?= h($mensagem) ?></div>
+        <?php endif; ?>
 
-    <?php if (isset($_GET['salvo'])): ?>
-        <div class="mensagem">Registro cadastrado com sucesso.</div>
-    <?php endif; ?>
+        <?php if ($mostrarFormulario): ?>
+            <h2 style="margin:0 0 16px;font-size:18px;">
+                <?= $acao === 'editar' ? 'Editar registro' : 'Adicionar registro' ?>
+            </h2>
 
-    <?php if (isset($_GET['editado'])): ?>
-        <div class="mensagem">Registro atualizado com sucesso.</div>
-    <?php endif; ?>
+            <form method="post" action="<?= h($urlLista) ?>">
+                <input type="hidden" name="csrf_token" value="<?= h($token) ?>">
+                <input type="hidden" name="acao_form" value="salvar">
+                <input type="hidden" name="id" value="<?= (int) ($registroEdicao['id'] ?? 0) ?>">
 
-    <?php if (isset($_GET['excluido'])): ?>
-        <div class="mensagem">Registro excluído com sucesso.</div>
-    <?php endif; ?>
+                <div class="grade-campos">
+                    <?php foreach ($camposDef as $campo => $meta):
+                        $valorAtual = $registroEdicao[$campo] ?? '';
+                        $largo = ($meta['tipo'] ?? '') === 'textarea';
+                    ?>
+                        <div class="campo <?= $largo ? 'campo-largo' : '' ?>">
+                            <label for="<?= h($campo) ?>">
+                                <?= h($meta['label']) ?>
+                                <?php if (!empty($meta['obrigatorio'])): ?>
+                                    <span class="obrigatorio">*</span>
+                                <?php endif; ?>
+                            </label>
 
-    <section class="card">
-        <?php if (empty($registros)): ?>
+                            <?php if (($meta['tipo'] ?? 'text') === 'textarea'): ?>
+                                <textarea id="<?= h($campo) ?>" name="<?= h($campo) ?>"
+                                    <?= !empty($meta['obrigatorio']) ? 'required' : '' ?>
+                                    placeholder="<?= h($meta['placeholder'] ?? '') ?>"><?= h((string) $valorAtual) ?></textarea>
+                            <?php elseif (($meta['tipo'] ?? '') === 'select'): ?>
+                                <select id="<?= h($campo) ?>" name="<?= h($campo) ?>">
+                                    <?php foreach (($meta['opcoes'] ?? ['']) as $op): ?>
+                                        <option value="<?= h($op) ?>" <?= (string) $valorAtual === (string) $op ? 'selected' : '' ?>>
+                                            <?= $op === '' ? 'Selecione' : h($op) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            <?php else: ?>
+                                <input
+                                    type="<?= h($meta['tipo'] ?? 'text') ?>"
+                                    id="<?= h($campo) ?>"
+                                    name="<?= h($campo) ?>"
+                                    value="<?= h((string) $valorAtual) ?>"
+                                    <?= !empty($meta['obrigatorio']) ? 'required' : '' ?>
+                                    placeholder="<?= h($meta['placeholder'] ?? '') ?>"
+                                    <?= ($meta['tipo'] ?? '') === 'date' ? 'max="' . h(date('Y-m-d')) . '"' : '' ?>
+                                >
+                            <?php endif; ?>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
 
-            <div class="vazio">
-                <h3>Nenhum registro encontrado.</h3>
-                <p>Clique em "Novo cadastro" para adicionar uma informação.</p>
-            </div>
+                <div class="acoes">
+                    <button class="btn" type="submit">Salvar</button>
+                    <a class="btn secundario" href="<?= h($urlLista) ?>">Cancelar</a>
+                </div>
+            </form>
 
         <?php else: ?>
 
-            <div class="tabela-container">
-                <table>
-                    <thead>
-                    <tr>
-                        <?php if ($tipo === 'vacina'): ?>
-                            <th>Vacina</th>
-                            <th>Data</th>
-                            <th>Dose</th>
-                            <th>Lote</th>
-                            <th>Estabelecimento</th>
-                            <th>Ações</th>
-
-                        <?php elseif ($tipo === 'alergia'): ?>
-                            <th>Alergia</th>
-                            <th>Tipo</th>
-                            <th>Gravidade</th>
-                            <th>Reação</th>
-                            <th>Observação</th>
-                            <th>Ações</th>
-
-                        <?php elseif ($tipo === 'alergia_vacina'): ?>
-                            <th>Vacina</th>
-                            <th>Data da reação</th>
-                            <th>Gravidade</th>
-                            <th>Reação</th>
-                            <th>Observação</th>
-                            <th>Ações</th>
-
-                        <?php elseif ($tipo === 'doenca'): ?>
-                            <th>Doença</th>
-                            <th>Diagnóstico</th>
-                            <th>Status</th>
-                            <th>Tratamento</th>
-                            <th>Observação</th>
-                            <th>Ações</th>
-
-                        <?php else: ?>
-                            <th>Tipo</th>
-                            <th>Profissional</th>
-                            <th>Emissão</th>
-                            <th>Validade</th>
-                            <th>Documento</th>
-                            <th>Ações</th>
-                        <?php endif; ?>
-                    </tr>
-                    </thead>
-
-                    <tbody>
-                    <?php foreach ($registros as $registro): ?>
-                        <tr>
-                            <?php if ($tipo === 'vacina'): ?>
-
-                                <td>
-                                    <strong><?= escapar($registro['vacina'] ?? '-') ?></strong>
-                                    <br>
-                                    <span class="badge"><?= escapar($registro['grupo'] ?? '-') ?></span>
-                                </td>
-                                <td><?= escapar(dataBr($registro['data_aplicacao'] ?? null)) ?></td>
-                                <td><?= escapar($registro['dose'] ?? '-') ?></td>
-                                <td><?= escapar($registro['lote'] ?? '-') ?></td>
-                                <td>
-                                    <?= escapar($registro['estabelecimento'] ?? '-') ?>
-                                    <br>
-                                    <small><?= escapar($registro['municipio'] ?? '') ?></small>
-                                </td>
-
-                            <?php elseif ($tipo === 'alergia'): ?>
-
-                                <td><strong><?= escapar($registro['alergia'] ?? '-') ?></strong></td>
-                                <td><?= escapar($registro['tipo'] ?? '-') ?></td>
-                                <td><?= escapar($registro['gravidade'] ?? '-') ?></td>
-                                <td><?= nl2br(escapar($registro['reacao'] ?? '-')) ?></td>
-                                <td><?= nl2br(escapar($registro['observacao'] ?? '-')) ?></td>
-
-                            <?php elseif ($tipo === 'alergia_vacina'): ?>
-
-                                <td><strong><?= escapar($registro['vacina'] ?? '-') ?></strong></td>
-                                <td><?= escapar(dataBr($registro['data_reacao'] ?? null)) ?></td>
-                                <td><?= escapar($registro['gravidade'] ?? '-') ?></td>
-                                <td><?= nl2br(escapar($registro['reacao'] ?? '-')) ?></td>
-                                <td><?= nl2br(escapar($registro['observacao'] ?? '-')) ?></td>
-
-                            <?php elseif ($tipo === 'doenca'): ?>
-
-                                <td><strong><?= escapar($registro['doenca'] ?? '-') ?></strong></td>
-                                <td><?= escapar(dataBr($registro['data_diagnostico'] ?? null)) ?></td>
-                                <td><span class="badge"><?= escapar($registro['status'] ?? '-') ?></span></td>
-                                <td><?= nl2br(escapar($registro['tratamento'] ?? '-')) ?></td>
-                                <td><?= nl2br(escapar($registro['observacao'] ?? '-')) ?></td>
-
-                            <?php else: ?>
-
-                                <td><strong><?= escapar($registro['tipo'] ?? '-') ?></strong></td>
-                                <td>
-                                    <?= escapar($registro['profissional'] ?? '-') ?>
-                                    <br>
-                                    <small><?= escapar($registro['registro_profissional'] ?? '') ?></small>
-                                </td>
-                                <td>
-                                    <?php
-                                    echo escapar(
-                                        $colunaDataAtestado !== null
-                                            ? dataBr($registro[$colunaDataAtestado] ?? null)
-                                            : '-'
-                                    );
-                                    ?>
-                                </td>
-                                <td>
-                                    <?php
-                                    echo escapar(
-                                        $colunaValidadeAtestado !== null
-                                            ? dataBr($registro[$colunaValidadeAtestado] ?? null)
-                                            : '-'
-                                    );
-                                    ?>
-                                </td>
-                                <td>
-                                    <?php if (!empty($registro['arquivo_url'])): ?>
-                                        <a href="<?= escapar($registro['arquivo_url']) ?>"
-                                           target="_blank"
-                                           rel="noopener noreferrer">
-                                            Abrir documento
-                                        </a>
-                                    <?php else: ?>
-                                        -
-                                    <?php endif; ?>
-                                </td>
-
-                            <?php endif; ?>
-
-                            <td class="acoes">
-                                <a href="editar.php?tipo=<?= urlencode($tipo) ?>&id=<?= (int) ($registro['id'] ?? 0) ?>"
-                                   class="btn-editar">
-                                    Editar
-                                </a>
-
-                                <a href="editar.php?tipo=<?= urlencode($tipo) ?>&id=<?= (int) ($registro['id'] ?? 0) ?>&acao=excluir"
-                                   class="btn-excluir"
-                                   onclick="return confirm('Deseja realmente excluir este registro?');">
-                                    Excluir
-                                </a>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                    </tbody>
-                </table>
+            <div class="acoes" style="margin-top:0;margin-bottom:18px;">
+                <a class="btn" href="<?= h($urlLista . '&acao=adicionar') ?>">+ Adicionar</a>
             </div>
 
+            <?php if (empty($registros)): ?>
+                <div class="vazio">
+                    Nenhum registro encontrado nesta categoria.<br>
+                    Clique em <strong>Adicionar</strong> para incluir o primeiro.
+                </div>
+            <?php else: ?>
+                <div class="tabela-container">
+                    <table>
+                        <thead>
+                        <tr>
+                            <?php foreach ($camposDef as $campo => $meta): ?>
+                                <th><?= h($meta['label']) ?></th>
+                            <?php endforeach; ?>
+                            <th>Ações</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($registros as $reg): ?>
+                            <tr>
+                                <?php foreach ($camposDef as $campo => $meta): ?>
+                                    <td>
+                                        <?php
+                                        $v = $reg[$campo] ?? '';
+                                        if ($v === null || $v === '') {
+                                            echo '—';
+                                        } else {
+                                            echo nl2br(h((string) $v));
+                                        }
+                                        ?>
+                                    </td>
+                                <?php endforeach; ?>
+                                <td>
+                                    <div class="acoes-linha">
+                                        <a class="btn secundario pequeno"
+                                           href="<?= h($urlLista . '&acao=editar&id=' . (int) $reg['id']) ?>">
+                                            Editar
+                                        </a>
+                                        <form method="post" action="<?= h($urlLista) ?>"
+                                              style="display:inline;margin:0;"
+                                              onsubmit="return confirm('Deseja realmente excluir este registro?');">
+                                            <input type="hidden" name="csrf_token" value="<?= h($token) ?>">
+                                            <input type="hidden" name="acao_form" value="excluir">
+                                            <input type="hidden" name="id" value="<?= (int) $reg['id'] ?>">
+                                            <button class="btn perigo pequeno" type="submit">Excluir</button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+
+            <div class="acoes">
+                <a class="btn" href="<?= h($urlPerfil) ?>">Meu perfil de saúde</a>
+                <a class="btn secundario" href="registros.php?tipo=vacina">Vacinas</a>
+                <a class="btn secundario" href="registros.php?tipo=alergia">Alergias</a>
+                <a class="btn secundario" href="registros.php?tipo=doenca">Doenças</a>
+                <a class="btn secundario" href="registros.php?tipo=atestado">Atestados</a>
+            </div>
         <?php endif; ?>
     </section>
-
 </main>
 
+<footer>
+    Saúde-Conecta — seus registros de saúde em um só lugar.
+</footer>
 </body>
 </html>
