@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">
+<meta name="theme-color" content="#0d7a6f">
+<meta name="description" content="Saúde-Conecta — sua saúde, mais conectada com você.">
+<title>Saúde-Conecta | Início</title>
+
+<style>
+:root {
+    --verde: #0d7a6f;
+    --verde-escuro: #0a5f56;
+    --verde-claro: #e7f6f3;
+    --verde-suave: #f3faf8;
+    --texto: #1a3330;
+    --secundario: #5a736e;
+    --borda: #d6e8e3;
+    --branco: #ffffff;
+    --sombra: 0 10px 32px rgba(13, 122, 111, 0.07);
+    --sombra-hover: 0 16px 40px rgba(13, 122, 111, 0.12);
+    --raio: 20px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+    font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: var(--verde-suave);
+    color: var(--texto);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+}
+
+a { text-decoration: none; color: inherit; }
+
+/* ========== HEADER ========== */
+.topo {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(18px);
+    border-bottom: 1px solid var(--borda);
+}
+
+.topo-conteudo {
+    max-width: 1160px;
+    margin: 0 auto;
+    padding: 0 24px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.marca {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--verde);
+    letter-spacing: -0.3px;
+}
+
+.marca-icone {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #0d7a6f, #16a899);
+    color: white;
+    box-shadow: 0 4px 12px rgba(13, 122, 111, 0.25);
+    flex-shrink: 0;
+}
+
+.marca-icone svg {
+    width: 20px;
+    height: 20px;
+}
+
+.nav a {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--secundario);
+    position: relative;
+}
+
+.nav a.ativo {
+    color: var(--verde);
+}
+
+.nav a.ativo::after {
+    content: "";
+    position: absolute;
+    bottom: -8px;
+    left: 0;
+    right: 0;
+    height: 2.5px;
+    background: var(--verde);
+    border-radius: 2px;
+}
+
+.btn-sair {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border: 1px solid var(--borda);
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--secundario);
+    background: white;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.btn-sair:hover {
+    border-color: #c0ddd6;
+    background: var(--verde-claro);
+    color: var(--verde);
+}
+
+/* ========== HERO ========== */
+.hero {
+    max-width: 1160px;
+    margin: 0 auto;
+    padding: 40px 24px 32px;
+    display: grid;
+    grid-template-columns: 1.05fr 0.95fr;
+    gap: 40px;
+    align-items: center;
+}
+
+.hero-texto h1 {
+    font-size: clamp(28px, 5vw, 44px);
+    font-weight: 800;
+    line-height: 1.15;
+    letter-spacing: -0.8px;
+    color: var(--verde-escuro);
+    margin-bottom: 16px;
+}
+
+.hero-texto h1 span {
+    color: var(--verde);
+}
+
+.hero-texto p {
+    font-size: 15.5px;
+    color: var(--secundario);
+    max-width: 420px;
+    margin-bottom: 28px;
+    line-height: 1.6;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 14px 24px;
+    border-radius: 12px;
+    font-size: 15px;
+    font-weight: 700;
+    transition: all 0.2s;
+    border: none;
+    cursor: pointer;
+    min-height: 48px; /* melhor para toque */
+}
+
+.btn-principal {
+    background: var(--verde);
+    color: white;
+    box-shadow: 0 8px 22px rgba(13, 122, 111, 0.28);
+}
+
+.btn-principal:hover {
+    background: var(--verde-escuro);
+    transform: translateY(-2px);
+}
+
+.btn-principal svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* Imagem do hero */
+.hero-imagem {
+    position: relative;
+    border-radius: 22px;
+    overflow: hidden;
+    background: linear-gradient(145deg, #d8f0ea 0%, #eaf7f4 100%);
+    box-shadow: var(--sombra);
+    aspect-ratio: 5/4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.hero-imagem-conteudo {
+    text-align: center;
+    padding: 28px 20px;
+}
+
+.hero-icone {
+    width: 88px;
+    height: 88px;
+    margin: 0 auto 18px;
+    border-radius: 50%;
+    background: white;
+    display: grid;
+    place-items: center;
+    box-shadow: 0 10px 28px rgba(13, 122, 111, 0.14);
+}
+
+.hero-icone svg {
+    width: 46px;
+    height: 46px;
+    color: var(--verde);
+}
+
+.hero-frase {
+    font-size: 15px;
+    font-style: italic;
+    color: var(--verde-escuro);
+    max-width: 220px;
+    margin: 0 auto;
+    line-height: 1.45;
+}
+
+/* ========== CARDS ========== */
+.secao-cards {
+    max-width: 1160px;
+    margin: 0 auto;
+    padding: 8px 24px 48px;
+}
+
+.grade-cards {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+}
+
+.card {
+    background: white;
+    border: 1px solid var(--borda);
+    border-radius: var(--raio);
+    padding: 24px 20px 20px;
+    box-shadow: var(--sombra);
+    transition: all 0.25s ease;
+    display: flex;
+    flex-direction: column;
+    min-height: 180px;
+}
+
+.card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--sombra-hover);
+    border-color: #b8ddd4;
+}
+
+.card-icone {
+    width: 48px;
+    height: 48px;
+    border-radius: 13px;
+    display: grid;
+    place-items: center;
+    margin-bottom: 16px;
+}
+
+.card-icone svg {
+    width: 22px;
+    height: 22px;
+}
+
+.card h3 {
+    font-size: 16px;
+    font-weight: 800;
+    margin-bottom: 8px;
+    color: var(--texto);
+}
+
+.card p {
+    font-size: 13.5px;
+    color: var(--secundario);
+    line-height: 1.5;
+    flex: 1;
+}
+
+.card-seta {
+    margin-top: 16px;
+    color: var(--verde);
+    font-size: 18px;
+    font-weight: 700;
+    align-self: flex-end;
+}
+
+.icone-agendamento { background: #e0f2fe; color: #0284c7; }
+.icone-prontuario  { background: #ecfdf5; color: #059669; }
+.icone-acompanhamento { background: #fce7f3; color: #db2777; }
+.icone-mapa { background: #e0f2fe; color: #0369a1; }
+
+/* ========== SEÇÃO INFERIOR ========== */
+.secao-inferior {
+    max-width: 1160px;
+    margin: 0 auto;
+    padding: 0 24px 56px;
+    display: grid;
+    grid-template-columns: 1.15fr 1fr;
+    gap: 40px;
+    align-items: center;
+}
+
+.secao-inferior h2 {
+    font-size: 25px;
+    font-weight: 800;
+    color: var(--verde-escuro);
+    margin-bottom: 12px;
+    letter-spacing: -0.4px;
+}
+
+.secao-inferior > div > p {
+    color: var(--secundario);
+    font-size: 15px;
+    line-height: 1.65;
+    max-width: 400px;
+}
+
+.beneficios {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.beneficio {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--texto);
+}
+
+.beneficio-icone {
+    width: 40px;
+    height: 40px;
+    border-radius: 11px;
+    background: var(--verde-claro);
+    color: var(--verde);
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+}
+
+.beneficio-icone svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* ========== RODAPÉ ========== */
+.rodape {
+    background: white;
+    border-top: 1px solid var(--borda);
+    padding: 24px 20px;
+    text-align: center;
+}
+
+.rodape p {
+    color: var(--secundario);
+    font-size: 13.5px;
+}
+
+.rodape strong {
+    color: var(--verde);
+}
+
+/* ========== RESPONSIVO ========== */
+
+/* Tablet */
+@media (max-width: 980px) {
+    .hero {
+        grid-template-columns: 1fr;
+        gap: 28px;
+        padding-top: 32px;
+        text-align: center;
+    }
+
+    .hero-texto p {
+        margin-left: auto;
+        margin-right: auto;
+    }
+
+    .hero-imagem {
+        order: -1;
+        max-height: 260px;
+        aspect-ratio: 16/10;
+    }
+
+    .grade-cards {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .secao-inferior {
+        grid-template-columns: 1fr;
+        gap: 28px;
+        text-align: center;
+    }
+
+    .secao-inferior > div > p {
+        margin: 0 auto;
+    }
+
+    .beneficios {
+        align-items: center;
+    }
+}
+
+/* Celular */
+@media (max-width: 640px) {
+    .topo-conteudo {
+        padding: 0 16px;
+        height: 58px;
+    }
+
+    .marca {
+        font-size: 16px;
+        gap: 8px;
+    }
+
+    .marca-icone {
+        width: 34px;
+        height: 34px;
+    }
+
+    .marca-icone svg {
+        width: 18px;
+        height: 18px;
+    }
+
+    .nav {
+        display: none; /* esconde "Início" no mobile para ficar mais limpo */
+    }
+
+    .btn-sair {
+        padding: 7px 12px;
+        font-size: 12.5px;
+    }
+
+    .hero {
+        padding: 24px 16px 28px;
+        gap: 24px;
+    }
+
+    .hero-texto h1 {
+        font-size: 26px;
+        margin-bottom: 12px;
+    }
+
+    .hero-texto p {
+        font-size: 14.5px;
+        margin-bottom: 22px;
+    }
+
+    .btn {
+        width: 100%; /* botão ocupa a largura toda no celular */
+        max-width: 320px;
+        margin: 0 auto;
+        padding: 14px 20px;
+        font-size: 15px;
+    }
+
+    .hero-imagem {
+        max-height: 220px;
+        border-radius: 18px;
+    }
+
+    .hero-icone {
+        width: 72px;
+        height: 72px;
+    }
+
+    .hero-icone svg {
+        width: 38px;
+        height: 38px;
+    }
+
+    .hero-frase {
+        font-size: 14px;
+    }
+
+    .secao-cards {
+        padding: 4px 16px 40px;
+    }
+
+    .grade-cards {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    .card {
+        min-height: auto;
+        padding: 20px 18px;
+        border-radius: 16px;
+    }
+
+    .card h3 {
+        font-size: 15.5px;
+    }
+
+    .card p {
+        font-size: 13px;
+    }
+
+    .secao-inferior {
+        padding: 0 16px 48px;
+        gap: 24px;
+    }
+
+    .secao-inferior h2 {
+        font-size: 22px;
+    }
+
+    .secao-inferior > div > p {
+        font-size: 14.5px;
+    }
+
+    .beneficio {
+        font-size: 14px;
+        width: 100%;
+        max-width: 280px;
+        justify-content: flex-start;
+    }
+
+    .rodape {
+        padding: 20px 16px;
+    }
+}
+
+/* Celulares muito pequenos */
+@media (max-width: 380px) {
+    .hero-texto h1 {
+        font-size: 24px;
+    }
+
+    .marca {
+        font-size: 15px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        transition-duration: 0.01ms !important;
+    }
+}
+</style>
+</head>
+
+<body>
+
+<!-- HEADER -->
+<header class="topo">
+    <div class="topo-conteudo">
+        <a href="index.html" class="marca">
+            <span class="marca-icone">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                    <path d="M12 8v4M10 10h4" stroke-width="1.8"/>
+                </svg>
+            </span>
+            Saúde-Conecta
+        </a>
+
+        <nav class="nav">
+            <a href="index.html" class="ativo">Início</a>
+        </nav>
+
+        <a href="logout.php" class="btn-sair">Sair</a>
+    </div>
+</header>
+
+<!-- HERO -->
+<section class="hero">
+    <div class="hero-texto">
+        <h1>Sua saúde,<br><span>mais conectada</span><br>com você.</h1>
+        <p>
+            O Saúde-Conecta é o seu espaço para cuidar do que mais importa: a sua saúde e bem-estar.
+        </p>
+        <a href="perfil_saude.php" class="btn btn-principal">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="8" r="4"/><path d="M5 21v-2a7 7 0 0 1 14 0v2"/>
+            </svg>
+            Ver meu perfil
+        </a>
+    </div>
+
+    <div class="hero-imagem">
+        <div class="hero-imagem-conteudo">
+            <div class="hero-icone">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                    <path d="M8 12h2l1.5-3 2 6 1.5-3H16" stroke-width="1.8"/>
+                </svg>
+            </div>
+            <p class="hero-frase">
+                Cuidar da sua saúde também é um ato de amor ♥
+            </p>
+        </div>
+    </div>
+</section>
+
+<!-- CARDS -->
+<section class="secao-cards">
+    <div class="grade-cards">
+
+        <a href="perfil_saude.php#servicos" class="card">
+            <div class="card-icone icone-agendamento">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>
+                </svg>
+            </div>
+            <h3>Agendamentos</h3>
+            <p>Consulte seus agendamentos e compromissos médicos.</p>
+            <span class="card-seta">→</span>
+        </a>
+
+        <a href="registros.php?tipo=vacina" class="card">
+            <div class="card-icone icone-prontuario">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h8"/>
+                </svg>
+            </div>
+            <h3>Meu Prontuário</h3>
+            <p>Acesse seus históricos, exames e resultados.</p>
+            <span class="card-seta">→</span>
+        </a>
+
+        <a href="gravidez.php" class="card">
+            <div class="card-icone icone-acompanhamento">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                </svg>
+            </div>
+            <h3>Acompanhamentos</h3>
+            <p>Cuide da sua saúde com nossos acompanhamentos específicos.</p>
+            <span class="card-seta">→</span>
+        </a>
+
+        <a href="mapa.php" class="card">
+            <div class="card-icone icone-mapa">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3Z"/><path d="M9 3v15M15 6v15"/>
+                </svg>
+            </div>
+            <h3>Mapa da Saúde</h3>
+            <p>Encontre unidades de saúde próximas a você.</p>
+            <span class="card-seta">→</span>
+        </a>
+
+    </div>
+</section>
+
+<!-- SEÇÃO INFERIOR -->
+<section class="secao-inferior">
+    <div>
+        <h2>Cuide da sua saúde</h2>
+        <p>
+            Com o Saúde-Conecta, você tem tudo o que precisa em um só lugar.
+            Mais praticidade, mais organização e mais cuidado para o seu dia a dia.
+        </p>
+    </div>
+
+    <div class="beneficios">
+        <div class="beneficio">
+            <span class="beneficio-icone">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/>
+                </svg>
+            </span>
+            Seus dados protegidos
+        </div>
+        <div class="beneficio">
+            <span class="beneficio-icone">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+                </svg>
+            </span>
+            Acesso rápido e fácil
+        </div>
+        <div class="beneficio">
+            <span class="beneficio-icone">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                </svg>
+            </span>
+            Mais qualidade de vida
+        </div>
+    </div>
+</section>
+
+<!-- RODAPÉ -->
+<footer class="rodape">
+    <p><strong>Saúde-Conecta</strong> — sua saúde, mais conectada com você</p>
+</footer>
+
+</body>
+</html>

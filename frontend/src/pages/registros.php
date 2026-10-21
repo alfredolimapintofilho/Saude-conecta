@@ -5,6 +5,8 @@
  * Datas digitadas/exibidas como DD/MM/AAAA; armazenadas no MySQL como AAAA-MM-DD.
  */
 
+declare(strict_types=1);
+
 require_once __DIR__ . '/../../../backend/config/seguranca.php';
 require_once __DIR__ . '/../../../backend/config/database.php';
 
@@ -85,6 +87,25 @@ function formatarDataBrasileira($data): string
     return $data;
 }
 
+function icone(string $nome): string
+{
+    $icones = [
+        'saude' => '<path d="M12 21s-8-4.5-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 6.5-8 11-8 11Z"/><path d="M12 8v7M8.5 11.5h7"/>',
+        'voltar' => '<path d="M19 12H5M12 19l-7-7 7-7"/>',
+        'mais' => '<path d="M12 5v14M5 12h14"/>',
+        'editar' => '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/>',
+        'salvar' => '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/>',
+        'lixeira' => '<path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+        'vacina' => '<path d="m18 2 4 4M7 17 3 21M14 4l6 6M5 13l6 6M3 21l7-7M9 7l8 8"/>',
+        'alergia' => '<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="M12 8v5M12 16h.01"/>',
+        'doenca' => '<path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z"/><path d="M12 8v8M8 12h8"/>',
+        'atestado' => '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h8M8 17h8"/>',
+    ];
+
+    $conteudo = $icones[$nome] ?? $icones['saude'];
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $conteudo . '</svg>';
+}
+
 $idUsuario = obterIdUsuario($usuario);
 $nome = nomeUsuario($usuario);
 
@@ -98,6 +119,7 @@ $categorias = [
         'titulo' => 'Cartão de vacinação',
         'descricao' => 'Gerencie seus registros de vacinação.',
         'tabela' => 'vacinacoes',
+        'icone' => 'vacina',
         'campos' => [
             'nome_vacina' => ['label' => 'Nome da vacina', 'tipo' => 'text', 'obrigatorio' => true],
             'data_aplicacao' => ['label' => 'Data de aplicação', 'tipo' => 'date', 'obrigatorio' => true],
@@ -111,6 +133,7 @@ $categorias = [
         'titulo' => 'Alergias',
         'descricao' => 'Gerencie as alergias registradas no seu perfil.',
         'tabela' => 'alergias',
+        'icone' => 'alergia',
         'campos' => [
             'substancia' => ['label' => 'Substância / agente', 'tipo' => 'text', 'obrigatorio' => true],
             'tipo_reacao' => ['label' => 'Tipo de reação', 'tipo' => 'text', 'obrigatorio' => false, 'placeholder' => 'Ex.: cutânea, respiratória'],
@@ -122,6 +145,7 @@ $categorias = [
         'titulo' => 'Reações a vacinas',
         'descricao' => 'Gerencie reações ou alergias relacionadas a vacinas.',
         'tabela' => 'reacoes_vacinas',
+        'icone' => 'alergia',
         'campos' => [
             'nome_vacina' => ['label' => 'Vacina', 'tipo' => 'text', 'obrigatorio' => true],
             'data_reacao' => ['label' => 'Data da reação', 'tipo' => 'date', 'obrigatorio' => false],
@@ -134,6 +158,7 @@ $categorias = [
         'titulo' => 'Histórico de doenças',
         'descricao' => 'Gerencie as doenças registradas no seu histórico.',
         'tabela' => 'historico_doencas',
+        'icone' => 'doenca',
         'campos' => [
             'nome_doenca' => ['label' => 'Nome da doença / condição', 'tipo' => 'text', 'obrigatorio' => true],
             'data_diagnostico' => ['label' => 'Data do diagnóstico', 'tipo' => 'date', 'obrigatorio' => false],
@@ -145,6 +170,7 @@ $categorias = [
         'titulo' => 'Atestados médicos',
         'descricao' => 'Gerencie os atestados registrados na sua conta.',
         'tabela' => 'atestados',
+        'icone' => 'atestado',
         'campos' => [
             'tipo_atestado' => ['label' => 'Tipo de atestado', 'tipo' => 'text', 'obrigatorio' => true, 'placeholder' => 'Ex.: médico, odontológico'],
             'data_emissao' => ['label' => 'Data de emissão', 'tipo' => 'date', 'obrigatorio' => true],
@@ -348,50 +374,545 @@ $urlLista = 'registros.php?tipo=' . urlencode($tipo);
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= h($categoria['titulo']) ?> | Saúde-Conecta</title>
-    <style>
-        :root{--verde:#087f68;--verde-escuro:#075d4f;--fundo:#f3f7f6;--texto:#20312d;--borda:#dce7e3;--branco:#fff;--secundario:#60716b}
-        *{box-sizing:border-box}body{margin:0;background:var(--fundo);color:var(--texto);font-family:Arial,Helvetica,sans-serif}
-        header{background:var(--branco);border-bottom:1px solid var(--borda);padding:18px 5%;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
-        .marca{color:var(--verde);font-size:22px;font-weight:800;text-decoration:none}.usuario{color:#53655f;font-size:14px}
-        main{width:min(1100px,92%);margin:32px auto}.voltar{display:inline-block;color:var(--verde);text-decoration:none;margin-bottom:20px;font-weight:bold}
-        .painel{background:var(--branco);border:1px solid var(--borda);border-radius:16px;padding:26px;box-shadow:0 5px 20px rgba(20,55,45,.04);margin-bottom:20px}
-        h1{margin:0 0 10px;font-size:clamp(24px,4vw,32px)}.descricao{color:var(--secundario);line-height:1.6;margin-bottom:20px}
-        .aviso{background:#f1f8f5;border:1px solid #cfe7dd;padding:14px 16px;border-radius:10px;line-height:1.6;margin-bottom:18px}.aviso.erro{background:#fff5f2;border-color:#f1d2c8}.aviso.sucesso{background:#effaf3;border-color:#bfe8cf;color:#246c43}
-        .tabela-container{width:100%;overflow-x:auto}table{width:100%;border-collapse:collapse;margin-top:8px;font-size:14px}th,td{padding:12px;border-bottom:1px solid var(--borda);text-align:left;vertical-align:top}th{background:#edf6f2;color:var(--verde-escuro)}
-        .acoes-linha{display:flex;gap:8px;flex-wrap:wrap}.btn{display:inline-block;padding:10px 14px;border-radius:9px;background:var(--verde);color:white;text-decoration:none;font-weight:bold;font-size:13px;border:none;cursor:pointer}.btn.secundario{background:#e8f2ee;color:var(--verde-escuro)}.btn.perigo{background:#c0392b}.btn.pequeno{padding:7px 11px;font-size:12px}
-        .acoes{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px}.campo{margin-bottom:16px}.campo label{display:block;margin-bottom:6px;font-weight:bold;font-size:13px;color:#385466}
-        .campo input,.campo select,.campo textarea{width:100%;padding:11px 12px;border:1px solid #dce7ed;border-radius:10px;font:inherit;font-size:14px}.campo textarea{min-height:90px;resize:vertical}.obrigatorio{color:#c0392b}
-        .grade-campos{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px}.campo-largo{grid-column:1/-1}.ajuda-data{display:block;color:#60716b;font-size:12px;margin-top:5px}
-        @media(max-width:640px){.grade-campos{grid-template-columns:1fr}.campo-largo{grid-column:auto}main{width:94%;margin:20px auto}.painel{padding:18px}}
-        footer{text-align:center;padding:28px 12px;color:#708079;font-size:13px}.vazio{text-align:center;padding:28px 12px;color:var(--secundario)}
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#087f8c">
+<meta name="description" content="<?= h($categoria['titulo']) ?> — Saúde-Conecta">
+<title><?= h($categoria['titulo']) ?> | Saúde-Conecta</title>
+
+<style>
+:root {
+    --fundo: #f0f7fa;
+    --texto: #18394e;
+    --secundario: #5f7585;
+    --verde: #087f8c;
+    --verde-escuro: #066773;
+    --verde-claro: #e6f6f4;
+    --borda: #e0eaf0;
+    --sombra: 0 8px 28px rgba(24, 57, 78, 0.06);
+    --raio: 16px;
+    --raio-lg: 20px;
+    --vermelho: #b42318;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+    min-height: 100vh;
+    margin: 0;
+    background: var(--fundo);
+    color: var(--texto);
+    font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; text-decoration: none; }
+
+svg {
+    display: block;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: 3px solid #38b6bd;
+    outline-offset: 3px;
+}
+
+/* ========== HEADER ========== */
+.topo {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: rgba(255, 255, 255, 0.97);
+    border-bottom: 1px solid var(--borda);
+    backdrop-filter: blur(16px);
+}
+
+.topo-conteudo {
+    width: min(1100px, calc(100% - 40px));
+    min-height: 64px;
+    margin: auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.marca {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 17px;
+    font-weight: 800;
+    letter-spacing: -0.3px;
+}
+
+.marca-icone {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border-radius: 11px;
+    background: linear-gradient(135deg, #087f8c, #1fa8ab);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(8, 127, 140, 0.25);
+}
+
+.marca-icone svg { width: 20px; height: 20px; }
+.marca-texto span { color: var(--verde); }
+
+.usuario-topo {
+    color: var(--secundario);
+    font-size: 13.5px;
+    font-weight: 600;
+}
+
+.botao-voltar {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 14px;
+    border: 1px solid var(--borda);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--texto);
+    font-size: 13px;
+    font-weight: 700;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.botao-voltar:hover {
+    border-color: #b5dedc;
+    background: #f4fbfa;
+}
+
+.botao-voltar svg { width: 16px; height: 16px; }
+
+/* ========== PÁGINA ========== */
+.pagina {
+    width: min(1100px, calc(100% - 40px));
+    margin: 24px auto 56px;
+}
+
+/* ========== HERO ========== */
+.hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--raio-lg);
+    background:
+        radial-gradient(circle at 88% 18%, rgba(255,255,255,0.18) 0 60px, transparent 61px),
+        linear-gradient(125deg, #065f73 0%, #087f8c 48%, #2cb5ae 100%);
+    box-shadow: 0 12px 32px rgba(8, 127, 140, 0.18);
+    color: #fff;
+    padding: 26px 30px;
+    margin-bottom: 22px;
+}
+
+.hero-etiqueta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border: 1px solid rgba(255,255,255,0.28);
+    border-radius: 999px;
+    background: rgba(255,255,255,0.12);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.hero-etiqueta svg { width: 14px; height: 14px; }
+
+.hero h1 {
+    margin: 12px 0 0;
+    font-size: clamp(22px, 3vw, 28px);
+    font-weight: 800;
+    letter-spacing: -0.4px;
+    line-height: 1.25;
+}
+
+.hero p {
+    margin: 8px 0 0;
+    max-width: 520px;
+    color: rgba(255,255,255,0.88);
+    font-size: 14.5px;
+}
+
+/* ========== CARD ========== */
+.card {
+    background: #fff;
+    border: 1px solid var(--borda);
+    border-radius: var(--raio);
+    padding: 22px 24px;
+    margin-bottom: 18px;
+    box-shadow: var(--sombra);
+}
+
+.card h2 {
+    margin: 0 0 16px;
+    font-size: 17px;
+    font-weight: 800;
+}
+
+/* ========== MENSAGENS ========== */
+.mensagem {
+    padding: 13px 16px;
+    border-radius: 10px;
+    margin-bottom: 18px;
+    font-size: 13.5px;
+    border: 1px solid;
+}
+
+.mensagem.sucesso {
+    background: #eef9f2;
+    border-color: #b8e5c8;
+    color: #246c43;
+}
+
+.mensagem.erro {
+    background: #fff5f5;
+    border-color: #efc8c8;
+    color: #a13535;
+}
+
+/* ========== NAVEGAÇÃO ENTRE CATEGORIAS ========== */
+.nav-categorias {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+
+.nav-categorias a {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border: 1px solid var(--borda);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--secundario);
+    font-size: 12.5px;
+    font-weight: 700;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.nav-categorias a:hover {
+    border-color: #b5dedc;
+    background: #f4fbfa;
+    color: var(--verde);
+}
+
+.nav-categorias a.ativo {
+    border-color: var(--verde);
+    background: var(--verde-claro);
+    color: var(--verde-escuro);
+}
+
+.nav-categorias a svg { width: 15px; height: 15px; }
+
+/* ========== BOTÕES ========== */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 40px;
+    padding: 9px 16px;
+    border: 0;
+    border-radius: 10px;
+    background: var(--verde);
+    color: #fff;
+    font: inherit;
+    font-size: 13.5px;
+    font-weight: 700;
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.15s;
+}
+
+.btn:hover { background: var(--verde-escuro); }
+.btn svg { width: 16px; height: 16px; }
+
+.btn-sec {
+    background: #edf5f3;
+    color: var(--verde-escuro);
+}
+
+.btn-sec:hover { background: #dceeea; }
+
+.btn-editar {
+    background: #e8efff;
+    color: #294e9b;
+}
+
+.btn-editar:hover { background: #d9e4ff; }
+
+.btn-excluir {
+    background: #fff0ee;
+    color: var(--vermelho);
+}
+
+.btn-excluir:hover { background: #ffe4e0; }
+
+.btn-pequeno {
+    min-height: 34px;
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+.acoes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+/* ========== FORMULÁRIO ========== */
+.grade-campos {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+}
+
+.campo {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+
+.campo-largo { grid-column: 1 / -1; }
+
+.campo label {
+    font-size: 13px;
+    font-weight: 700;
+    color: #385466;
+}
+
+.obrigatorio { color: var(--vermelho); }
+
+.campo input,
+.campo select,
+.campo textarea {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    border: 1px solid #d5e3ea;
+    border-radius: 10px;
+    background: #fff;
+    color: var(--texto);
+    font: inherit;
+    font-size: 14px;
+    transition: border-color 0.15s;
+}
+
+.campo textarea {
+    min-height: 100px;
+    resize: vertical;
+}
+
+.campo input:focus,
+.campo select:focus,
+.campo textarea:focus {
+    border-color: var(--verde);
+    outline: none;
+}
+
+.ajuda-data {
+    color: var(--secundario);
+    font-size: 11.5px;
+}
+
+/* ========== TABELA ========== */
+.tabela-container {
+    width: 100%;
+    overflow-x: auto;
+    border-radius: 12px;
+    border: 1px solid var(--borda);
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+}
+
+th, td {
+    padding: 13px 14px;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--borda);
+}
+
+th {
+    background: #f0f8f6;
+    color: var(--verde-escuro);
+    font-weight: 700;
+    font-size: 12.5px;
+    white-space: nowrap;
+}
+
+tr:last-child td { border-bottom: none; }
+
+tr:hover td { background: #f9fcfb; }
+
+.acoes-linha {
+    display: flex;
+    gap: 7px;
+    flex-wrap: wrap;
+}
+
+.vazio {
+    padding: 32px 20px;
+    text-align: center;
+    border: 1px dashed #c5d8d4;
+    border-radius: 12px;
+    background: #f9fcfb;
+    color: var(--secundario);
+}
+
+.vazio h3 {
+    margin: 0 0 6px;
+    font-size: 15px;
+    color: var(--texto);
+}
+
+.vazio p {
+    margin: 0;
+    font-size: 13.5px;
+}
+
+/* ========== RODAPÉ ========== */
+.rodape {
+    padding: 22px 20px;
+    border-top: 1px solid var(--borda);
+    background: #fff;
+    text-align: center;
+}
+
+.rodape p {
+    margin: 0;
+    color: var(--secundario);
+    font-size: 12.5px;
+}
+
+.rodape strong { color: var(--verde); }
+
+/* ========== RESPONSIVO ========== */
+@media (max-width: 720px) {
+    .topo-conteudo {
+        width: calc(100% - 28px);
+    }
+
+    .pagina {
+        width: calc(100% - 28px);
+        margin-top: 16px;
+    }
+
+    .hero {
+        padding: 22px 18px;
+    }
+
+    .hero h1 { font-size: 22px; }
+
+    .grade-campos {
+        grid-template-columns: 1fr;
+    }
+
+    .campo-largo { grid-column: auto; }
+
+    .card { padding: 18px 16px; }
+
+    .usuario-topo { display: none; }
+}
+
+@media (max-width: 420px) {
+    .marca { font-size: 15px; }
+    .marca-icone { width: 34px; height: 34px; }
+    .botao-voltar { padding: 8px 11px; font-size: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+</style>
 </head>
+
 <body>
-<header>
-    <a class="marca" href="<?= h($urlPerfil) ?>">Saúde-Conecta</a>
-    <div class="usuario">Olá, <?= h($nome) ?></div>
+<header class="topo">
+    <div class="topo-conteudo">
+        <a class="marca" href="<?= h($urlPerfil) ?>" aria-label="Saúde-Conecta, início">
+            <span class="marca-icone"><?= icone('saude') ?></span>
+            <span class="marca-texto">Saúde<span>-Conecta</span></span>
+        </a>
+
+        <div style="display:flex;align-items:center;gap:12px;">
+            <span class="usuario-topo">Olá, <?= h($nome) ?></span>
+            <a class="botao-voltar" href="<?= h($urlPerfil) ?>">
+                <?= icone('voltar') ?> Voltar ao perfil
+            </a>
+        </div>
+    </div>
 </header>
-<main>
-    <a class="voltar" href="<?= h($urlPerfil) ?>">&#8592; Voltar ao perfil de saúde</a>
-    <section class="painel">
+
+<main class="pagina">
+
+    <section class="hero" aria-label="Apresentação">
+        <span class="hero-etiqueta">
+            <?= icone($categoria['icone'] ?? 'saude') ?> Registros de saúde
+        </span>
         <h1><?= h($categoria['titulo']) ?></h1>
-        <p class="descricao"><?= h($categoria['descricao']) ?></p>
+        <p><?= h($categoria['descricao']) ?></p>
+    </section>
 
-        <?php if ($mensagem !== ''): ?>
-            <div class="aviso <?= h($tipoMensagem) ?>" role="status"><?= h($mensagem) ?></div>
-        <?php endif; ?>
+    <?php if ($mensagem !== ''): ?>
+        <div class="mensagem <?= h($tipoMensagem) ?>" role="status">
+            <?= h($mensagem) ?>
+        </div>
+    <?php endif; ?>
 
+    <!-- Navegação rápida entre categorias -->
+    <nav class="nav-categorias" aria-label="Categorias de registros">
+        <a href="registros.php?tipo=vacina" class="<?= $tipo === 'vacina' ? 'ativo' : '' ?>">
+            <?= icone('vacina') ?> Vacinas
+        </a>
+        <a href="registros.php?tipo=alergia" class="<?= $tipo === 'alergia' ? 'ativo' : '' ?>">
+            <?= icone('alergia') ?> Alergias
+        </a>
+        <a href="registros.php?tipo=alergia_vacina" class="<?= $tipo === 'alergia_vacina' ? 'ativo' : '' ?>">
+            <?= icone('alergia') ?> Reações
+        </a>
+        <a href="registros.php?tipo=doenca" class="<?= $tipo === 'doenca' ? 'ativo' : '' ?>">
+            <?= icone('doenca') ?> Doenças
+        </a>
+        <a href="registros.php?tipo=atestado" class="<?= $tipo === 'atestado' ? 'ativo' : '' ?>">
+            <?= icone('atestado') ?> Atestados
+        </a>
+    </nav>
+
+    <section class="card">
         <?php if ($mostrarFormulario): ?>
-            <h2 style="margin:0 0 16px;font-size:18px;">
-                <?= $acao === 'editar' ? 'Editar registro' : 'Adicionar registro' ?>
-            </h2>
+            <h2><?= $acao === 'editar' ? 'Editar registro' : 'Adicionar registro' ?></h2>
+
             <form method="post" action="<?= h($urlLista) ?>">
                 <input type="hidden" name="csrf_token" value="<?= h($token) ?>">
                 <input type="hidden" name="acao_form" value="salvar">
                 <input type="hidden" name="id" value="<?= (int) ($registroEdicao['id'] ?? 0) ?>">
+
                 <div class="grade-campos">
                     <?php foreach ($camposDef as $campo => $meta):
                         $valorAtual = $registroEdicao[$campo] ?? '';
@@ -400,50 +921,92 @@ $urlLista = 'registros.php?tipo=' . urlencode($tipo);
                         <div class="campo <?= $largo ? 'campo-largo' : '' ?>">
                             <label for="<?= h($campo) ?>">
                                 <?= h($meta['label']) ?>
-                                <?php if (!empty($meta['obrigatorio'])): ?><span class="obrigatorio">*</span><?php endif; ?>
+                                <?php if (!empty($meta['obrigatorio'])): ?>
+                                    <span class="obrigatorio">*</span>
+                                <?php endif; ?>
                             </label>
+
                             <?php if (($meta['tipo'] ?? 'text') === 'textarea'): ?>
-                                <textarea id="<?= h($campo) ?>" name="<?= h($campo) ?>" <?= !empty($meta['obrigatorio']) ? 'required' : '' ?> placeholder="<?= h($meta['placeholder'] ?? '') ?>"><?= h((string) $valorAtual) ?></textarea>
+                                <textarea
+                                    id="<?= h($campo) ?>"
+                                    name="<?= h($campo) ?>"
+                                    <?= !empty($meta['obrigatorio']) ? 'required' : '' ?>
+                                    placeholder="<?= h($meta['placeholder'] ?? '') ?>"
+                                ><?= h((string) $valorAtual) ?></textarea>
+
                             <?php elseif (($meta['tipo'] ?? '') === 'select'): ?>
                                 <select id="<?= h($campo) ?>" name="<?= h($campo) ?>">
                                     <?php foreach (($meta['opcoes'] ?? ['']) as $op): ?>
-                                        <option value="<?= h($op) ?>" <?= (string) $valorAtual === (string) $op ? 'selected' : '' ?>><?= $op === '' ? 'Selecione' : h($op) ?></option>
+                                        <option
+                                            value="<?= h($op) ?>"
+                                            <?= (string) $valorAtual === (string) $op ? 'selected' : '' ?>
+                                        >
+                                            <?= $op === '' ? 'Selecione' : h($op) ?>
+                                        </option>
                                     <?php endforeach; ?>
                                 </select>
+
                             <?php elseif (($meta['tipo'] ?? '') === 'date'): ?>
-                                <input type="text" id="<?= h($campo) ?>" name="<?= h($campo) ?>"
+                                <input
+                                    type="text"
+                                    id="<?= h($campo) ?>"
+                                    name="<?= h($campo) ?>"
                                     value="<?= h(formatarDataBrasileira($valorAtual)) ?>"
-                                    placeholder="DD/MM/AAAA" inputmode="numeric" maxlength="10"
+                                    placeholder="DD/MM/AAAA"
+                                    inputmode="numeric"
+                                    maxlength="10"
                                     pattern="(0[1-9]|[12][0-9]|3[01])/(0[1-9]|1[0-2])/[0-9]{4}"
-                                    title="Digite a data no formato DD/MM/AAAA" autocomplete="off"
-                                    <?= !empty($meta['obrigatorio']) ? 'required' : '' ?>>
+                                    title="Digite a data no formato DD/MM/AAAA"
+                                    autocomplete="off"
+                                    <?= !empty($meta['obrigatorio']) ? 'required' : '' ?>
+                                >
                                 <small class="ajuda-data">Digite no formato dia/mês/ano (ex.: 25/12/2026).</small>
+
                             <?php else: ?>
-                                <input type="<?= h($meta['tipo'] ?? 'text') ?>" id="<?= h($campo) ?>" name="<?= h($campo) ?>"
-                                    value="<?= h((string) $valorAtual) ?>" <?= !empty($meta['obrigatorio']) ? 'required' : '' ?>
-                                    placeholder="<?= h($meta['placeholder'] ?? '') ?>">
+                                <input
+                                    type="<?= h($meta['tipo'] ?? 'text') ?>"
+                                    id="<?= h($campo) ?>"
+                                    name="<?= h($campo) ?>"
+                                    value="<?= h((string) $valorAtual) ?>"
+                                    <?= !empty($meta['obrigatorio']) ? 'required' : '' ?>
+                                    placeholder="<?= h($meta['placeholder'] ?? '') ?>"
+                                >
                             <?php endif; ?>
                         </div>
                     <?php endforeach; ?>
                 </div>
+
                 <div class="acoes">
-                    <button class="btn" type="submit">Salvar</button>
-                    <a class="btn secundario" href="<?= h($urlLista) ?>">Cancelar</a>
+                    <button class="btn" type="submit">
+                        <?= icone('salvar') ?> Salvar
+                    </button>
+                    <a class="btn btn-sec" href="<?= h($urlLista) ?>">Cancelar</a>
                 </div>
             </form>
+
         <?php else: ?>
             <div class="acoes" style="margin-top:0;margin-bottom:18px;">
-                <a class="btn" href="<?= h($urlLista . '&acao=adicionar') ?>">+ Adicionar</a>
+                <a class="btn" href="<?= h($urlLista . '&acao=adicionar') ?>">
+                    <?= icone('mais') ?> Adicionar
+                </a>
             </div>
+
             <?php if (empty($registros)): ?>
-                <div class="vazio">Nenhum registro encontrado nesta categoria.<br>Clique em <strong>Adicionar</strong> para incluir o primeiro.</div>
+                <div class="vazio">
+                    <h3>Nenhum registro encontrado</h3>
+                    <p>Clique em <strong>Adicionar</strong> para incluir o primeiro registro nesta categoria.</p>
+                </div>
             <?php else: ?>
                 <div class="tabela-container">
                     <table>
-                        <thead><tr>
-                            <?php foreach ($camposDef as $campo => $meta): ?><th><?= h($meta['label']) ?></th><?php endforeach; ?>
-                            <th>Ações</th>
-                        </tr></thead>
+                        <thead>
+                            <tr>
+                                <?php foreach ($camposDef as $campo => $meta): ?>
+                                    <th><?= h($meta['label']) ?></th>
+                                <?php endforeach; ?>
+                                <th>Ações</th>
+                            </tr>
+                        </thead>
                         <tbody>
                         <?php foreach ($registros as $reg): ?>
                             <tr>
@@ -460,33 +1023,48 @@ $urlLista = 'registros.php?tipo=' . urlencode($tipo);
                                         }
                                     ?></td>
                                 <?php endforeach; ?>
-                                <td><div class="acoes-linha">
-                                    <a class="btn secundario pequeno" href="<?= h($urlLista . '&acao=editar&id=' . (int) $reg['id']) ?>">Editar</a>
-                                    <form method="post" action="<?= h($urlLista) ?>" style="display:inline;margin:0;" onsubmit="return confirm('Deseja realmente excluir este registro?');">
-                                        <input type="hidden" name="csrf_token" value="<?= h($token) ?>">
-                                        <input type="hidden" name="acao_form" value="excluir">
-                                        <input type="hidden" name="id" value="<?= (int) $reg['id'] ?>">
-                                        <button class="btn perigo pequeno" type="submit">Excluir</button>
-                                    </form>
-                                </div></td>
+                                <td>
+                                    <div class="acoes-linha">
+                                        <a
+                                            class="btn btn-editar btn-pequeno"
+                                            href="<?= h($urlLista . '&acao=editar&id=' . (int) $reg['id']) ?>"
+                                        >
+                                            <?= icone('editar') ?> Editar
+                                        </a>
+                                        <form
+                                            method="post"
+                                            action="<?= h($urlLista) ?>"
+                                            style="display:inline;margin:0;"
+                                            onsubmit="return confirm('Deseja realmente excluir este registro?');"
+                                        >
+                                            <input type="hidden" name="csrf_token" value="<?= h($token) ?>">
+                                            <input type="hidden" name="acao_form" value="excluir">
+                                            <input type="hidden" name="id" value="<?= (int) $reg['id'] ?>">
+                                            <button class="btn btn-excluir btn-pequeno" type="submit">
+                                                Excluir
+                                            </button>
+                                        </form>
+                                    </div>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                         </tbody>
                     </table>
                 </div>
             <?php endif; ?>
+
             <div class="acoes">
                 <a class="btn" href="<?= h($urlPerfil) ?>">Meu perfil de saúde</a>
-                <a class="btn secundario" href="registros.php?tipo=vacina">Vacinas</a>
-                <a class="btn secundario" href="registros.php?tipo=alergia">Alergias</a>
-                <a class="btn secundario" href="registros.php?tipo=alergia_vacina">Reações a vacinas</a>
-                <a class="btn secundario" href="registros.php?tipo=doenca">Doenças</a>
-                <a class="btn secundario" href="registros.php?tipo=atestado">Atestados</a>
             </div>
         <?php endif; ?>
     </section>
+
 </main>
-<footer>Saúde-Conecta — seus registros de saúde em um só lugar.</footer>
+
+<footer class="rodape">
+    <p><strong>Saúde-Conecta</strong> — seus registros de saúde em um só lugar</p>
+</footer>
+
 <script>
 document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('input[placeholder="DD/MM/AAAA"]').forEach(function (campo) {
@@ -495,12 +1073,15 @@ document.addEventListener('DOMContentLoaded', function () {
             const valorAntes = campo.value;
             let numeros = campo.value.replace(/\D/g, '').slice(0, 8);
             let formatado = numeros;
+
             if (numeros.length > 4) {
                 formatado = numeros.slice(0, 2) + '/' + numeros.slice(2, 4) + '/' + numeros.slice(4);
             } else if (numeros.length > 2) {
                 formatado = numeros.slice(0, 2) + '/' + numeros.slice(2);
             }
+
             campo.value = formatado;
+
             if (inicio !== null && valorAntes.length <= campo.value.length) {
                 campo.setSelectionRange(campo.value.length, campo.value.length);
             }

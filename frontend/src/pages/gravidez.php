@@ -8,8 +8,8 @@ iniciarSessaoSegura();
 $usuario = exigirLogin();
 
 $usuarioId = is_array($usuario)
-    ? (int) ($usuario['id'] ?? $usuario['usuario_id'] ?? 0)
-    : (int) ($usuario->id ?? $usuario->usuario_id ?? 0);
+    ? (int) ($usuario['id'] ?? $usuario['usuario_id'] ?? $usuario['id_usuario'] ?? 0)
+    : (int) ($usuario->id ?? $usuario->usuario_id ?? $usuario->id_usuario ?? 0);
 
 if ($usuarioId <= 0) {
     http_response_code(403);
@@ -84,6 +84,24 @@ function validarToken(string $csrf): void
         http_response_code(403);
         exit('Token de segurança inválido. Atualize a página.');
     }
+}
+
+function icone(string $nome): string
+{
+    $icones = [
+        'saude' => '<path d="M12 21s-8-4.5-8-11a4.5 4.5 0 0 1 8-2.8A4.5 4.5 0 0 1 20 10c0 6.5-8 11-8 11Z"/><path d="M12 8v7M8.5 11.5h7"/>',
+        'voltar' => '<path d="M19 12H5M12 19l-7-7 7-7"/>',
+        'calendario' => '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+        'bebe' => '<path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="M6 21v-1a6 6 0 0 1 12 0v1"/>',
+        'check' => '<path d="M20 6 9 17l-5-5"/>',
+        'mais' => '<path d="M12 5v14M5 12h14"/>',
+        'editar' => '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4Z"/>',
+        'salvar' => '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/>',
+    ];
+
+    $conteudo = $icones[$nome] ?? $icones['saude'];
+
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $conteudo . '</svg>';
 }
 
 $categorias = [
@@ -388,528 +406,938 @@ $valorEdicaoData = $registroEdicao
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#087f8c">
+<meta name="description" content="Acompanhe sua gravidez, consultas, exames e preparação para o bebê no Saúde-Conecta.">
 <title>Acompanhar minha gravidez | Saúde-Conecta</title>
 
 <style>
 :root {
-    --verde: #16866d;
-    --verde-escuro: #106c58;
-    --fundo: #f4f8f7;
-    --borda: #dce8e4;
-    --texto: #253b37;
-    --suave: #667873;
+    --fundo: #f0f7fa;
+    --texto: #18394e;
+    --secundario: #5f7585;
+    --verde: #087f8c;
+    --verde-escuro: #066773;
+    --verde-claro: #e6f6f4;
+    --borda: #e0eaf0;
+    --sombra: 0 8px 28px rgba(24, 57, 78, 0.06);
+    --sombra-hover: 0 12px 32px rgba(24, 57, 78, 0.10);
+    --raio: 16px;
+    --raio-lg: 20px;
     --vermelho: #b42318;
 }
 
 * { box-sizing: border-box; }
 
+html { scroll-behavior: smooth; }
+
 body {
+    min-height: 100vh;
     margin: 0;
     background: var(--fundo);
     color: var(--texto);
-    font-family: Arial, Helvetica, sans-serif;
-    line-height: 1.6;
+    font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
 }
 
+a { color: inherit; text-decoration: none; }
+
+svg {
+    display: block;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: 3px solid #38b6bd;
+    outline-offset: 3px;
+}
+
+/* ========== HEADER ========== */
 .topo {
-    background: white;
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: rgba(255, 255, 255, 0.97);
     border-bottom: 1px solid var(--borda);
-    padding: 15px 20px;
+    backdrop-filter: blur(16px);
 }
 
-.topo-interno {
-    max-width: 1100px;
+.topo-conteudo {
+    width: min(1100px, calc(100% - 40px));
+    min-height: 64px;
     margin: auto;
     display: flex;
-    justify-content: space-between;
-    gap: 12px;
     align-items: center;
+    justify-content: space-between;
+    gap: 16px;
 }
 
 .marca {
-    color: var(--verde-escuro);
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 17px;
     font-weight: 800;
-    font-size: 21px;
-    text-decoration: none;
+    letter-spacing: -0.3px;
 }
 
-a { color: var(--verde-escuro); }
-
-.container {
-    max-width: 1100px;
-    padding: 25px 18px 40px;
-    margin: auto;
+.marca-icone {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border-radius: 11px;
+    background: linear-gradient(135deg, #087f8c, #1fa8ab);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(8, 127, 140, 0.25);
 }
 
-.hero {
-    background: linear-gradient(135deg, #e5f5ef, #fff);
-    border: 1px solid #cce8dc;
-    border-radius: 18px;
-    padding: 25px;
-    margin-bottom: 20px;
-}
+.marca-icone svg { width: 20px; height: 20px; }
+.marca-texto span { color: var(--verde); }
 
-.hero h1 { margin: 0 0 8px; }
-.hero p { margin: 0; color: var(--suave); }
-
-.card {
-    background: white;
+.botao-voltar {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 14px;
     border: 1px solid var(--borda);
-    border-radius: 15px;
-    padding: 21px;
-    margin-bottom: 19px;
-    box-shadow: 0 4px 15px #163c3110;
+    border-radius: 10px;
+    background: #fff;
+    color: var(--texto);
+    font-size: 13px;
+    font-weight: 700;
+    transition: border-color 0.15s, background 0.15s;
 }
 
-.card h2 { margin-top: 0; font-size: 21px; }
+.botao-voltar:hover {
+    border-color: #b5dedc;
+    background: #f4fbfa;
+}
 
-.grade {
+.botao-voltar svg { width: 16px; height: 16px; }
+
+/* ========== PÁGINA ========== */
+.pagina {
+    width: min(1100px, calc(100% - 40px));
+    margin: 24px auto 56px;
+}
+
+/* ========== HERO ========== */
+.hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--raio-lg);
+    background:
+        radial-gradient(circle at 88% 18%, rgba(255,255,255,0.18) 0 60px, transparent 61px),
+        linear-gradient(125deg, #065f73 0%, #087f8c 48%, #2cb5ae 100%);
+    box-shadow: 0 12px 32px rgba(8, 127, 140, 0.18);
+    color: #fff;
+    padding: 28px 32px;
+    margin-bottom: 22px;
+}
+
+.hero-etiqueta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border: 1px solid rgba(255,255,255,0.28);
+    border-radius: 999px;
+    background: rgba(255,255,255,0.12);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.hero-etiqueta svg { width: 14px; height: 14px; }
+
+.hero h1 {
+    margin: 12px 0 0;
+    font-size: clamp(24px, 3vw, 30px);
+    font-weight: 800;
+    letter-spacing: -0.4px;
+    line-height: 1.25;
+}
+
+.hero p {
+    margin: 8px 0 0;
+    max-width: 520px;
+    color: rgba(255,255,255,0.88);
+    font-size: 14.5px;
+}
+
+/* ========== CARDS ========== */
+.card {
+    background: #fff;
+    border: 1px solid var(--borda);
+    border-radius: var(--raio);
+    padding: 22px 24px;
+    margin-bottom: 18px;
+    box-shadow: var(--sombra);
+}
+
+.card h2 {
+    margin: 0 0 16px;
+    font-size: 17px;
+    font-weight: 800;
+    letter-spacing: -0.2px;
+}
+
+.card h3 {
+    margin: 0 0 12px;
+    font-size: 15px;
+    font-weight: 800;
+}
+
+/* ========== RESUMO ========== */
+.grade-resumo {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 13px;
+    gap: 12px;
+    margin-bottom: 18px;
 }
 
 .indicador {
-    border: 1px solid var(--borda);
+    padding: 16px 14px;
+    border: 1px solid #e8f0f4;
     border-radius: 12px;
-    padding: 15px;
+    background: #f9fcfd;
+    text-align: center;
 }
 
-.numero {
+.indicador .numero {
     display: block;
     color: var(--verde-escuro);
-    font-size: 25px;
+    font-size: 22px;
     font-weight: 800;
     overflow-wrap: anywhere;
+    line-height: 1.2;
 }
 
-.suave { color: var(--suave); font-size: 14px; }
+.indicador .rotulo {
+    display: block;
+    margin-top: 4px;
+    color: var(--secundario);
+    font-size: 12px;
+    font-weight: 600;
+}
 
+.progresso-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 13px;
+    color: var(--secundario);
+}
+
+.barra {
+    height: 10px;
+    background: #e4eef2;
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.barra-preenchimento {
+    height: 100%;
+    background: linear-gradient(90deg, var(--verde), #2cb5ae);
+    border-radius: 999px;
+    transition: width 0.3s ease;
+}
+
+.aviso-estimativa {
+    margin: 12px 0 0;
+    color: var(--secundario);
+    font-size: 12.5px;
+}
+
+/* ========== FORMULÁRIOS ========== */
 .form-grade {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
+    gap: 16px;
 }
 
 .campo {
     display: flex;
     flex-direction: column;
     gap: 6px;
+    min-width: 0;
 }
 
-.largo { grid-column: 1 / -1; }
+.campo-largo { grid-column: 1 / -1; }
 
-label { font-weight: bold; font-size: 14px; }
+.campo label {
+    font-size: 13px;
+    font-weight: 700;
+    color: #385466;
+}
 
-input, select, textarea {
+.campo input,
+.campo select,
+.campo textarea {
     width: 100%;
-    padding: 11px;
-    border: 1px solid #cbdad5;
-    border-radius: 9px;
-    font: inherit;
-    background: white;
+    min-height: 44px;
+    padding: 10px 12px;
+    border: 1px solid #d5e3ea;
+    border-radius: 10px;
+    background: #fff;
     color: var(--texto);
+    font: inherit;
+    font-size: 14px;
+    transition: border-color 0.15s;
 }
 
-textarea { min-height: 90px; resize: vertical; }
+.campo textarea {
+    min-height: 100px;
+    resize: vertical;
+}
 
-input:focus, select:focus, textarea:focus {
-    outline: 2px solid #a4d9c7;
+.campo input:focus,
+.campo select:focus,
+.campo textarea:focus {
     border-color: var(--verde);
+    outline: none;
 }
 
-.botoes, .acoes {
+.campo small {
+    color: var(--secundario);
+    font-size: 11.5px;
+}
+
+/* ========== BOTÕES ========== */
+.acoes {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
-    align-items: center;
+    gap: 10px;
+    margin-top: 18px;
 }
-
-.acoes { margin-top: 14px; }
 
 .btn {
     display: inline-flex;
-    justify-content: center;
     align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 40px;
+    padding: 9px 16px;
     border: 0;
-    border-radius: 8px;
-    padding: 9px 13px;
+    border-radius: 10px;
     background: var(--verde);
-    color: white;
+    color: #fff;
     font: inherit;
-    font-size: 14px;
-    font-weight: bold;
-    text-decoration: none;
+    font-size: 13.5px;
+    font-weight: 700;
     cursor: pointer;
+    text-decoration: none;
+    transition: background 0.15s;
 }
 
 .btn:hover { background: var(--verde-escuro); }
+.btn svg { width: 16px; height: 16px; }
 
 .btn-sec {
-    background: #edf5f1;
+    background: #edf5f3;
     color: var(--verde-escuro);
 }
 
+.btn-sec:hover { background: #dceeea; }
+
 .btn-editar {
-    background: #e9efff;
+    background: #e8efff;
     color: #294e9b;
 }
+
+.btn-editar:hover { background: #d9e4ff; }
 
 .btn-excluir {
     background: #fff0ee;
     color: var(--vermelho);
 }
 
+.btn-excluir:hover { background: #ffe4e0; }
+
+/* ========== MENSAGENS ========== */
 .mensagem {
-    padding: 13px 15px;
-    border-radius: 9px;
-    margin-bottom: 17px;
-    background: #e5f5ef;
-    color: var(--verde-escuro);
+    padding: 13px 16px;
+    border-radius: 10px;
+    margin-bottom: 18px;
+    font-size: 13.5px;
+    border: 1px solid;
+}
+
+.mensagem.sucesso {
+    background: #eef9f2;
+    border-color: #b8e5c8;
+    color: #246c43;
 }
 
 .mensagem.erro {
-    background: #fff0ee;
-    color: var(--vermelho);
+    background: #fff5f5;
+    border-color: #efc8c8;
+    color: #a13535;
 }
 
-.barra {
-    height: 10px;
-    background: #e7eeeb;
-    border-radius: 20px;
-    overflow: hidden;
+/* ========== LISTA DE REGISTROS ========== */
+.secao-categoria {
+    margin-top: 22px;
 }
 
-.barra div {
-    height: 100%;
-    background: var(--verde);
+.secao-categoria:first-child {
+    margin-top: 0;
 }
-
-.secao { margin-top: 24px; }
 
 .lista {
     display: grid;
-    gap: 11px;
+    gap: 10px;
 }
 
 .registro {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    gap: 15px;
+    gap: 16px;
+    padding: 16px 18px;
     border: 1px solid var(--borda);
     border-radius: 12px;
-    padding: 15px;
-    background: white;
+    background: #fff;
+    transition: border-color 0.15s, box-shadow 0.15s;
 }
 
-.registro.concluido { background: #f6faf8; }
+.registro:hover {
+    border-color: #c5e0de;
+    box-shadow: 0 4px 14px rgba(24, 57, 78, 0.05);
+}
+
+.registro.concluido {
+    background: #f7fbf9;
+}
 
 .registro.concluido .titulo {
     text-decoration: line-through;
-    color: var(--suave);
+    color: var(--secundario);
 }
 
 .tag {
     display: inline-block;
-    padding: 3px 9px;
+    padding: 3px 10px;
     margin-bottom: 6px;
-    background: #e5f5ef;
-    color: var(--verde-escuro);
-    border-radius: 20px;
-    font-size: 12px;
-    font-weight: bold;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
 }
 
-.titulo { font-weight: 800; }
+.tag.andamento {
+    background: #e6f6f4;
+    color: var(--verde-escuro);
+}
+
+.tag.concluido {
+    background: #e8f5e9;
+    color: #2e7d4b;
+}
+
+.titulo {
+    font-weight: 800;
+    font-size: 14.5px;
+    line-height: 1.35;
+}
+
+.data-registro {
+    margin-top: 4px;
+    color: var(--secundario);
+    font-size: 12.5px;
+}
 
 .descricao {
-    margin: 7px 0 0;
+    margin: 8px 0 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+    font-size: 13.5px;
+    color: #3a5260;
+    line-height: 1.5;
 }
 
 .registro-acoes {
     display: flex;
     flex-wrap: wrap;
     gap: 7px;
+    flex-shrink: 0;
 }
 
 .registro-acoes form { margin: 0; }
 
+.registro-acoes .btn {
+    min-height: 34px;
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
 .vazio {
-    padding: 20px;
+    padding: 28px 20px;
     text-align: center;
-    border: 1px dashed var(--borda);
+    border: 1px dashed #c5d8d4;
     border-radius: 12px;
-    color: var(--suave);
+    background: #f9fcfb;
+    color: var(--secundario);
 }
 
-footer {
+.vazio h3 {
+    margin: 0 0 6px;
+    font-size: 15px;
+    color: var(--texto);
+}
+
+.vazio p {
+    margin: 0;
+    font-size: 13.5px;
+}
+
+/* ========== AVISO FINAL ========== */
+.card-aviso {
+    background: linear-gradient(115deg, #f0f9f7, #f5fbfd);
+    border-color: #c5e6df;
+}
+
+.card-aviso p {
+    margin: 0;
+    font-size: 13.5px;
+    color: #3a5260;
+    line-height: 1.55;
+}
+
+/* ========== RODAPÉ ========== */
+.rodape {
+    padding: 22px 20px;
+    border-top: 1px solid var(--borda);
+    background: #fff;
     text-align: center;
-    padding: 20px;
-    color: var(--suave);
 }
 
+.rodape p {
+    margin: 0;
+    color: var(--secundario);
+    font-size: 12.5px;
+}
+
+.rodape strong {
+    color: var(--verde);
+}
+
+/* ========== RESPONSIVO ========== */
 @media (max-width: 720px) {
-    .grade, .form-grade { grid-template-columns: 1fr; }
-    .largo { grid-column: auto; }
-    .registro { flex-direction: column; }
-    .topo-interno { align-items: flex-start; flex-direction: column; }
-    .registro-acoes { width: 100%; }
+    .topo-conteudo {
+        width: calc(100% - 28px);
+    }
+
+    .pagina {
+        width: calc(100% - 28px);
+        margin-top: 16px;
+    }
+
+    .hero {
+        padding: 24px 20px;
+    }
+
+    .hero h1 {
+        font-size: 24px;
+    }
+
+    .grade-resumo {
+        grid-template-columns: 1fr;
+    }
+
+    .form-grade {
+        grid-template-columns: 1fr;
+    }
+
+    .campo-largo {
+        grid-column: auto;
+    }
+
+    .registro {
+        flex-direction: column;
+    }
+
+    .registro-acoes {
+        width: 100%;
+    }
+
+    .card {
+        padding: 18px 16px;
+    }
+}
+
+@media (max-width: 420px) {
+    .marca {
+        font-size: 15px;
+    }
+
+    .marca-icone {
+        width: 34px;
+        height: 34px;
+    }
+
+    .botao-voltar {
+        padding: 8px 11px;
+        font-size: 12px;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        scroll-behavior: auto !important;
+        transition-duration: 0.01ms !important;
+    }
 }
 </style>
 </head>
 
 <body>
 <header class="topo">
-    <div class="topo-interno">
-        <a class="marca" href="perfil_saude.php">Saúde-Conecta</a>
-        <a href="perfil_saude.php">← Voltar ao perfil de saúde</a>
+    <div class="topo-conteudo">
+        <a class="marca" href="perfil_saude.php" aria-label="Saúde-Conecta, início">
+            <span class="marca-icone"><?= icone('saude') ?></span>
+            <span class="marca-texto">Saúde<span>-Conecta</span></span>
+        </a>
+
+        <a class="botao-voltar" href="perfil_saude.php">
+            <?= icone('voltar') ?> Voltar ao perfil
+        </a>
     </div>
 </header>
 
-<main class="container">
+<main class="pagina">
 
-<section class="hero">
-    <h1>Acompanhar minha gravidez</h1>
-    <p>Organize consultas, exames, tarefas, preparação para o parto e cuidados com o bebê.</p>
-</section>
+    <section class="hero" aria-label="Apresentação">
+        <span class="hero-etiqueta">
+            <?= icone('bebe') ?> Acompanhamento gestacional
+        </span>
+        <h1>Acompanhar minha gravidez</h1>
+        <p>Organize consultas, exames, tarefas, preparação para o parto e cuidados com o bebê.</p>
+    </section>
 
-<?php if ($erro !== ''): ?>
-    <div class="mensagem erro"><?= h($erro) ?></div>
-<?php endif; ?>
-
-<?php if (isset($_GET['salvo'])): ?>
-    <div class="mensagem">Alterações salvas com sucesso!</div>
-<?php endif; ?>
-
-<section class="card">
-    <h2>Resumo da gravidez</h2>
-
-    <div class="grade">
-        <div class="indicador">
-            <span class="numero">
-                <?= $semanaGestacional !== null ? h($semanaGestacional) . ' sem.' : '—' ?>
-            </span>
-            <span class="suave">Semana estimada</span>
-        </div>
-
-        <div class="indicador">
-            <span class="numero"><?= h($dataPrevistaParto ?? '—') ?></span>
-            <span class="suave">Data provável do parto</span>
-        </div>
-
-        <div class="indicador">
-            <span class="numero"><?= $concluidos ?>/<?= $total ?></span>
-            <span class="suave">Registros concluídos</span>
-        </div>
-    </div>
-
-    <p class="suave">Progresso: <?= $progresso ?>%</p>
-    <div class="barra"><div style="width: <?= $progresso ?>%"></div></div>
-    <p class="suave">As estimativas não substituem a avaliação pré-natal.</p>
-</section>
-
-<section class="card">
-    <h2>Configurações da gravidez</h2>
-
-    <form method="post">
-        <input type="hidden" name="csrf_token" value="<?= h($csrf) ?>">
-        <input type="hidden" name="acao" value="salvar_configuracao">
-
-        <div class="form-grade">
-            <div class="campo">
-                <label for="data_ultima_menstruacao">Data da última menstruação</label>
-                <input
-                    type="text"
-                    id="data_ultima_menstruacao"
-                    name="data_ultima_menstruacao"
-                    value="<?= h(dataParaTela($dataBanco)) ?>"
-                    placeholder="DD/MM/AAAA"
-                    maxlength="10"
-                    inputmode="numeric"
-                    autocomplete="off"
-                >
-            </div>
-
-            <div class="campo largo">
-                <label for="observacoes">Observações</label>
-                <textarea
-                    id="observacoes"
-                    name="observacoes"
-                    maxlength="5000"
-                    placeholder="Anotações para conversar com a equipe de saúde."
-                ><?= h($config['observacoes'] ?? '') ?></textarea>
-            </div>
-        </div>
-
-        <div class="acoes">
-            <button class="btn" type="submit">Salvar configurações</button>
-        </div>
-    </form>
-</section>
-
-<section class="card" id="formulario-registro">
-    <h2><?= $registroEdicao ? 'Editar registro' : 'Adicionar consulta, exame ou tarefa' ?></h2>
-
-    <?php if ($registroEdicao): ?>
-        <p class="suave">
-            Você está editando: <strong><?= h($registroEdicao['titulo']) ?></strong>
-        </p>
+    <?php if ($erro !== ''): ?>
+        <div class="mensagem erro" role="alert"><?= h($erro) ?></div>
     <?php endif; ?>
 
-    <form method="post">
-        <input type="hidden" name="csrf_token" value="<?= h($csrf) ?>">
-        <input
-            type="hidden"
-            name="acao"
-            value="<?= $registroEdicao ? 'atualizar' : 'adicionar' ?>"
-        >
+    <?php if (isset($_GET['salvo'])): ?>
+        <div class="mensagem sucesso" role="status">Alterações salvas com sucesso!</div>
+    <?php endif; ?>
+
+    <!-- RESUMO -->
+    <section class="card">
+        <h2>Resumo da gravidez</h2>
+
+        <div class="grade-resumo">
+            <div class="indicador">
+                <span class="numero">
+                    <?= $semanaGestacional !== null ? h((string)$semanaGestacional) . ' sem.' : '—' ?>
+                </span>
+                <span class="rotulo">Semana estimada</span>
+            </div>
+
+            <div class="indicador">
+                <span class="numero"><?= h($dataPrevistaParto ?? '—') ?></span>
+                <span class="rotulo">Data provável do parto</span>
+            </div>
+
+            <div class="indicador">
+                <span class="numero"><?= $concluidos ?>/<?= $total ?></span>
+                <span class="rotulo">Registros concluídos</span>
+            </div>
+        </div>
+
+        <div class="progresso-info">
+            <span>Progresso geral</span>
+            <span><?= $progresso ?>%</span>
+        </div>
+        <div class="barra">
+            <div class="barra-preenchimento" style="width: <?= $progresso ?>%"></div>
+        </div>
+
+        <p class="aviso-estimativa">
+            As estimativas são baseadas na data da última menstruação e não substituem a avaliação pré-natal.
+        </p>
+    </section>
+
+    <!-- CONFIGURAÇÕES -->
+    <section class="card">
+        <h2>Configurações da gravidez</h2>
+
+        <form method="post">
+            <input type="hidden" name="csrf_token" value="<?= h($csrf) ?>">
+            <input type="hidden" name="acao" value="salvar_configuracao">
+
+            <div class="form-grade">
+                <div class="campo">
+                    <label for="data_ultima_menstruacao">Data da última menstruação</label>
+                    <input
+                        type="text"
+                        id="data_ultima_menstruacao"
+                        name="data_ultima_menstruacao"
+                        value="<?= h(dataParaTela($dataBanco)) ?>"
+                        placeholder="DD/MM/AAAA"
+                        maxlength="10"
+                        inputmode="numeric"
+                        autocomplete="off"
+                    >
+                    <small>Usada para estimar a semana gestacional e a data provável do parto.</small>
+                </div>
+
+                <div class="campo campo-largo">
+                    <label for="observacoes">Observações</label>
+                    <textarea
+                        id="observacoes"
+                        name="observacoes"
+                        maxlength="5000"
+                        placeholder="Anotações para conversar com a equipe de saúde."
+                    ><?= h($config['observacoes'] ?? '') ?></textarea>
+                </div>
+            </div>
+
+            <div class="acoes">
+                <button class="btn" type="submit">
+                    <?= icone('salvar') ?> Salvar configurações
+                </button>
+            </div>
+        </form>
+    </section>
+
+    <!-- FORMULÁRIO DE REGISTRO -->
+    <section class="card" id="formulario-registro">
+        <h2><?= $registroEdicao ? 'Editar registro' : 'Adicionar consulta, exame ou tarefa' ?></h2>
 
         <?php if ($registroEdicao): ?>
-            <input type="hidden" name="id" value="<?= (int)$registroEdicao['id'] ?>">
+            <p style="margin: -8px 0 16px; color: var(--secundario); font-size: 13.5px;">
+                Você está editando: <strong><?= h($registroEdicao['titulo']) ?></strong>
+            </p>
         <?php endif; ?>
 
-        <div class="form-grade">
-            <div class="campo">
-                <label for="categoria">Categoria</label>
-                <select id="categoria" name="categoria" required>
-                    <?php foreach ($categorias as $valor => $nome): ?>
-                        <option
-                            value="<?= h($valor) ?>"
-                            <?= $valorEdicaoCategoria === $valor ? 'selected' : '' ?>
-                        >
-                            <?= h($nome) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-
-            <div class="campo">
-                <label for="titulo">Título</label>
-                <input
-                    type="text"
-                    id="titulo"
-                    name="titulo"
-                    maxlength="150"
-                    value="<?= h($valorEdicaoTitulo) ?>"
-                    placeholder="Ex.: Consulta de pré-natal"
-                    required
-                >
-            </div>
-
-            <div class="campo">
-                <label for="data_ref">Data (opcional)</label>
-                <input
-                    type="text"
-                    id="data_ref"
-                    name="data_ref"
-                    value="<?= h(dataParaTela($valorEdicaoData)) ?>"
-                    placeholder="DD/MM/AAAA"
-                    maxlength="10"
-                    inputmode="numeric"
-                    autocomplete="off"
-                >
-            </div>
-
-            <div class="campo largo">
-                <label for="descricao">Descrição</label>
-                <textarea
-                    id="descricao"
-                    name="descricao"
-                    maxlength="10000"
-                    placeholder="Detalhes, observações ou itens que deseja preparar."
-                ><?= h($valorEdicaoDescricao) ?></textarea>
-            </div>
-        </div>
-
-        <div class="acoes">
-            <button class="btn" type="submit">
-                <?= $registroEdicao ? 'Salvar edição' : '+ Adicionar registro' ?>
-            </button>
+        <form method="post">
+            <input type="hidden" name="csrf_token" value="<?= h($csrf) ?>">
+            <input
+                type="hidden"
+                name="acao"
+                value="<?= $registroEdicao ? 'atualizar' : 'adicionar' ?>"
+            >
 
             <?php if ($registroEdicao): ?>
-                <a class="btn btn-sec" href="gravidez.php">Cancelar edição</a>
+                <input type="hidden" name="id" value="<?= (int)$registroEdicao['id'] ?>">
             <?php endif; ?>
-        </div>
-    </form>
-</section>
 
-<section class="card">
-    <h2>Meus registros</h2>
+            <div class="form-grade">
+                <div class="campo">
+                    <label for="categoria">Categoria</label>
+                    <select id="categoria" name="categoria" required>
+                        <?php foreach ($categorias as $valor => $nome): ?>
+                            <option
+                                value="<?= h($valor) ?>"
+                                <?= $valorEdicaoCategoria === $valor ? 'selected' : '' ?>
+                            >
+                                <?= h($nome) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
 
-    <?php if (!$registros): ?>
-        <div class="vazio">
-            <h3>Nenhum registro cadastrado</h3>
-            <p>Adicione sua primeira consulta, tarefa ou anotação.</p>
-        </div>
-    <?php endif; ?>
+                <div class="campo">
+                    <label for="titulo">Título</label>
+                    <input
+                        type="text"
+                        id="titulo"
+                        name="titulo"
+                        maxlength="150"
+                        value="<?= h($valorEdicaoTitulo) ?>"
+                        placeholder="Ex.: Consulta de pré-natal"
+                        required
+                    >
+                </div>
 
-    <?php foreach ($categorias as $chave => $nomeCategoria): ?>
-        <?php $itens = $porCategoria[$chave] ?? []; ?>
+                <div class="campo">
+                    <label for="data_ref">Data (opcional)</label>
+                    <input
+                        type="text"
+                        id="data_ref"
+                        name="data_ref"
+                        value="<?= h(dataParaTela($valorEdicaoData)) ?>"
+                        placeholder="DD/MM/AAAA"
+                        maxlength="10"
+                        inputmode="numeric"
+                        autocomplete="off"
+                    >
+                </div>
 
-        <?php if ($itens): ?>
-            <div class="secao">
-                <h3><?= h($nomeCategoria) ?></h3>
+                <div class="campo campo-largo">
+                    <label for="descricao">Descrição</label>
+                    <textarea
+                        id="descricao"
+                        name="descricao"
+                        maxlength="10000"
+                        placeholder="Detalhes, observações ou itens que deseja preparar."
+                    ><?= h($valorEdicaoDescricao) ?></textarea>
+                </div>
+            </div>
+
+            <div class="acoes">
+                <button class="btn" type="submit">
+                    <?= $registroEdicao
+                        ? icone('salvar') . ' Salvar edição'
+                        : icone('mais') . ' Adicionar registro' ?>
+                </button>
+
+                <?php if ($registroEdicao): ?>
+                    <a class="btn btn-sec" href="gravidez.php">Cancelar edição</a>
+                <?php endif; ?>
+            </div>
+        </form>
+    </section>
+
+    <!-- MEUS REGISTROS -->
+    <section class="card">
+        <h2>Meus registros</h2>
+
+        <?php if (!$registros): ?>
+            <div class="vazio">
+                <h3>Nenhum registro cadastrado</h3>
+                <p>Adicione sua primeira consulta, tarefa ou anotação acima.</p>
+            </div>
+        <?php endif; ?>
+
+        <?php foreach ($categorias as $chave => $nomeCategoria): ?>
+            <?php $itens = $porCategoria[$chave] ?? []; ?>
+
+            <?php if ($itens): ?>
+                <div class="secao-categoria">
+                    <h3><?= h($nomeCategoria) ?></h3>
+
+                    <div class="lista">
+                        <?php foreach ($itens as $r): ?>
+                            <?php
+                            $feito = (int)$r['concluido'] === 1;
+                            $desc = $r['descricao'] ?: $r['detalhes'];
+                            $dataR = $r['data_ref']
+                                ?: $r['proxima_data']
+                                ?: $r['data_registro'];
+                            ?>
+
+                            <article class="registro <?= $feito ? 'concluido' : '' ?>">
+                                <div>
+                                    <span class="tag <?= $feito ? 'concluido' : 'andamento' ?>">
+                                        <?= $feito ? 'Concluído' : 'Em andamento' ?>
+                                    </span>
+
+                                    <div class="titulo"><?= h($r['titulo']) ?></div>
+
+                                    <?php if ($dataR): ?>
+                                        <div class="data-registro">
+                                            Data: <?= h(dataParaTela($dataR)) ?>
+                                        </div>
+                                    <?php endif; ?>
+
+                                    <?php if ($desc): ?>
+                                        <p class="descricao"><?= h($desc) ?></p>
+                                    <?php endif; ?>
+                                </div>
+
+                                <div class="registro-acoes">
+                                    <a
+                                        class="btn btn-editar"
+                                        href="gravidez.php?editar=<?= (int)$r['id'] ?>#formulario-registro"
+                                    >
+                                        <?= icone('editar') ?> Editar
+                                    </a>
+
+                                    <form method="post">
+                                        <input type="hidden" name="csrf_token" value="<?= h($csrf) ?>">
+                                        <input type="hidden" name="acao" value="alternar">
+                                        <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+
+                                        <button class="btn btn-sec" type="submit">
+                                            <?= $feito ? 'Reabrir' : 'Concluir' ?>
+                                        </button>
+                                    </form>
+
+                                    <form
+                                        method="post"
+                                        onsubmit="return confirm('Tem certeza de que deseja excluir este registro? Esta ação não pode ser desfeita.');"
+                                    >
+                                        <input type="hidden" name="csrf_token" value="<?= h($csrf) ?>">
+                                        <input type="hidden" name="acao" value="excluir">
+                                        <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
+
+                                        <button class="btn btn-excluir" type="submit">
+                                            Excluir
+                                        </button>
+                                    </form>
+                                </div>
+                            </article>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+            <?php endif; ?>
+        <?php endforeach; ?>
+
+        <?php
+        $outros = [];
+        foreach ($registros as $r) {
+            $cat = $r['categoria'] ?: $r['tipo'];
+            if (!isset($categorias[$cat])) {
+                $outros[] = $r;
+            }
+        }
+        ?>
+
+        <?php if ($outros): ?>
+            <div class="secao-categoria">
+                <h3>Outros registros</h3>
 
                 <div class="lista">
-                    <?php foreach ($itens as $r): ?>
+                    <?php foreach ($outros as $r): ?>
                         <?php
                         $feito = (int)$r['concluido'] === 1;
                         $desc = $r['descricao'] ?: $r['detalhes'];
-                        $dataR = $r['data_ref']
-                            ?: $r['proxima_data']
-                            ?: $r['data_registro'];
                         ?>
 
                         <article class="registro <?= $feito ? 'concluido' : '' ?>">
                             <div>
-                                <span class="tag">
-                                    <?= $feito ? 'Concluído' : 'Em andamento' ?>
+                                <span class="tag <?= $feito ? 'concluido' : 'andamento' ?>">
+                                    <?= h($r['categoria'] ?: $r['tipo']) ?>
                                 </span>
-
                                 <div class="titulo"><?= h($r['titulo']) ?></div>
-
-                                <?php if ($dataR): ?>
-                                    <div class="suave">
-                                        Data: <?= h(dataParaTela($dataR)) ?>
-                                    </div>
-                                <?php endif; ?>
-
                                 <?php if ($desc): ?>
                                     <p class="descricao"><?= h($desc) ?></p>
                                 <?php endif; ?>
                             </div>
 
                             <div class="registro-acoes">
-                                <a
-                                    class="btn btn-editar"
-                                    href="gravidez.php?editar=<?= (int)$r['id'] ?>#formulario-registro"
-                                >Editar</a>
+                                <a class="btn btn-editar"
+                                   href="gravidez.php?editar=<?= (int)$r['id'] ?>#formulario-registro">
+                                    Editar
+                                </a>
 
                                 <form method="post">
                                     <input type="hidden" name="csrf_token" value="<?= h($csrf) ?>">
                                     <input type="hidden" name="acao" value="alternar">
                                     <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-
                                     <button class="btn btn-sec" type="submit">
                                         <?= $feito ? 'Reabrir' : 'Concluir' ?>
                                     </button>
                                 </form>
 
-                                <form
-                                    method="post"
-                                    onsubmit="return confirm('Tem certeza de que deseja excluir este registro? Esta ação não pode ser desfeita.');"
-                                >
+                                <form method="post"
+                                      onsubmit="return confirm('Deseja excluir este registro?');">
                                     <input type="hidden" name="csrf_token" value="<?= h($csrf) ?>">
                                     <input type="hidden" name="acao" value="excluir">
                                     <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-
-                                    <button class="btn btn-excluir" type="submit">
-                                        Excluir
-                                    </button>
+                                    <button class="btn btn-excluir" type="submit">Excluir</button>
                                 </form>
                             </div>
                         </article>
@@ -917,90 +1345,27 @@ footer {
                 </div>
             </div>
         <?php endif; ?>
-    <?php endforeach; ?>
+    </section>
 
-    <?php
-    $outros = [];
-
-    foreach ($registros as $r) {
-        $cat = $r['categoria'] ?: $r['tipo'];
-
-        if (!isset($categorias[$cat])) {
-            $outros[] = $r;
-        }
-    }
-    ?>
-
-    <?php if ($outros): ?>
-        <div class="secao">
-            <h3>Outros registros</h3>
-
-            <div class="lista">
-                <?php foreach ($outros as $r): ?>
-                    <?php
-                    $feito = (int)$r['concluido'] === 1;
-                    $desc = $r['descricao'] ?: $r['detalhes'];
-                    ?>
-
-                    <article class="registro <?= $feito ? 'concluido' : '' ?>">
-                        <div>
-                            <span class="tag">
-                                <?= h($r['categoria'] ?: $r['tipo']) ?>
-                            </span>
-                            <div class="titulo"><?= h($r['titulo']) ?></div>
-                            <?php if ($desc): ?>
-                                <p class="descricao"><?= h($desc) ?></p>
-                            <?php endif; ?>
-                        </div>
-
-                        <div class="registro-acoes">
-                            <a class="btn btn-editar"
-                               href="gravidez.php?editar=<?= (int)$r['id'] ?>#formulario-registro">
-                                Editar
-                            </a>
-
-                            <form method="post">
-                                <input type="hidden" name="csrf_token" value="<?= h($csrf) ?>">
-                                <input type="hidden" name="acao" value="alternar">
-                                <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                                <button class="btn btn-sec" type="submit">
-                                    <?= $feito ? 'Reabrir' : 'Concluir' ?>
-                                </button>
-                            </form>
-
-                            <form method="post"
-                                  onsubmit="return confirm('Deseja excluir este registro?');">
-                                <input type="hidden" name="csrf_token" value="<?= h($csrf) ?>">
-                                <input type="hidden" name="acao" value="excluir">
-                                <input type="hidden" name="id" value="<?= (int)$r['id'] ?>">
-                                <button class="btn btn-excluir" type="submit">Excluir</button>
-                            </form>
-                        </div>
-                    </article>
-                <?php endforeach; ?>
-            </div>
-        </div>
-    <?php endif; ?>
-</section>
-
-<section class="card">
-    <h2>Cuidados importantes</h2>
-    <p>
-        Esta página serve para organizar informações e compromissos.
-        Ela não substitui o acompanhamento pré-natal nem a orientação
-        de profissionais de saúde.
-    </p>
-</section>
+    <!-- AVISO -->
+    <section class="card card-aviso">
+        <h2>Cuidados importantes</h2>
+        <p>
+            Esta página serve para organizar informações e compromissos.
+            Ela não substitui o acompanhamento pré-natal nem a orientação
+            de profissionais de saúde.
+        </p>
+    </section>
 
 </main>
 
-<footer>Saúde-Conecta — acompanhamento da gravidez.</footer>
+<footer class="rodape">
+    <p><strong>Saúde-Conecta</strong> — acompanhamento da gravidez</p>
+</footer>
 
 <script>
-document.querySelectorAll(
-    '#data_ultima_menstruacao, #data_ref'
-).forEach(function(campo) {
-    campo.addEventListener('input', function() {
+document.querySelectorAll('#data_ultima_menstruacao, #data_ref').forEach(function (campo) {
+    campo.addEventListener('input', function () {
         const numeros = campo.value.replace(/\D/g, '').slice(0, 8);
 
         if (numeros.length > 4) {
